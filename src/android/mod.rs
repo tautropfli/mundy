@@ -65,15 +65,16 @@ use crate::{AccentColor, Srgba};
 use crate::{AvailablePreferences, Interest};
 use futures_channel::mpsc;
 use futures_lite::{stream, Stream, StreamExt as _};
-use jni::JNIEnv;
+use jni::Env;
 use pin_project_lite::pin_project;
 use result::Result;
 use std::time::Duration;
-use support::{java_vm, JavaSupport};
+use support::{java_vm, MundySupport, MundySupportRef};
 
 mod result;
 mod subscription;
 mod support;
+
 pub(crate) use subscription::on_configuration_changed;
 
 pin_project! {
@@ -142,37 +143,37 @@ fn get_preferences(interest: Interest) -> AvailablePreferences {
 }
 
 fn try_get_preferences(interest: Interest) -> Result<AvailablePreferences> {
-    let vm = java_vm()?;
-    let mut env = vm.attach_current_thread()?;
-    let support = JavaSupport::get()?;
+    java_vm().attach_current_thread(|env| {
+        let support = MundySupportRef::get()?;
 
-    let mut preferences = AvailablePreferences::default();
+        let mut preferences = AvailablePreferences::default();
 
-    #[cfg(feature = "color-scheme")]
-    if interest.is(Interest::ColorScheme) {
-        preferences.color_scheme = get_color_scheme(&support, &mut env).unwrap_or_default();
-    }
+        #[cfg(feature = "color-scheme")]
+        if interest.is(Interest::ColorScheme) {
+            preferences.color_scheme = get_color_scheme(&support, env).unwrap_or_default();
+        }
 
-    #[cfg(feature = "contrast")]
-    if interest.is(Interest::Contrast) {
-        preferences.contrast = get_contrast(&support, &mut env).unwrap_or_default();
-    }
+        #[cfg(feature = "contrast")]
+        if interest.is(Interest::Contrast) {
+            preferences.contrast = get_contrast(&support, env).unwrap_or_default();
+        }
 
-    #[cfg(feature = "reduced-motion")]
-    if interest.is(Interest::ReducedMotion) {
-        preferences.reduced_motion = get_reduced_motion(&support, &mut env).unwrap_or_default();
-    }
+        #[cfg(feature = "reduced-motion")]
+        if interest.is(Interest::ReducedMotion) {
+            preferences.reduced_motion = get_reduced_motion(&support, env).unwrap_or_default();
+        }
 
-    #[cfg(feature = "accent-color")]
-    if interest.is(Interest::AccentColor) {
-        preferences.accent_color = get_accent_color(&support, &mut env).unwrap_or_default();
-    }
+        #[cfg(feature = "accent-color")]
+        if interest.is(Interest::AccentColor) {
+            preferences.accent_color = get_accent_color(&support, env).unwrap_or_default();
+        }
 
-    Ok(preferences)
+        Ok(preferences)
+    })
 }
 
 #[cfg(feature = "color-scheme")]
-fn get_color_scheme(support: &JavaSupport, env: &mut JNIEnv) -> Result<ColorScheme> {
+fn get_color_scheme(support: &MundySupport, env: &mut Env) -> Result<ColorScheme> {
     if support.get_night_mode(env)? {
         Ok(ColorScheme::Dark)
     } else {
@@ -181,7 +182,7 @@ fn get_color_scheme(support: &JavaSupport, env: &mut JNIEnv) -> Result<ColorSche
 }
 
 #[cfg(feature = "contrast")]
-fn get_contrast(support: &JavaSupport, env: &mut JNIEnv) -> Result<Contrast> {
+fn get_contrast(support: &MundySupport, env: &mut Env) -> Result<Contrast> {
     if support.get_high_contrast(env)? {
         Ok(Contrast::More)
     } else {
@@ -190,7 +191,7 @@ fn get_contrast(support: &JavaSupport, env: &mut JNIEnv) -> Result<Contrast> {
 }
 
 #[cfg(feature = "reduced-motion")]
-fn get_reduced_motion(support: &JavaSupport, env: &mut JNIEnv) -> Result<ReducedMotion> {
+fn get_reduced_motion(support: &MundySupport, env: &mut Env) -> Result<ReducedMotion> {
     if support.get_prefers_reduced_motion(env)? {
         Ok(ReducedMotion::Reduce)
     } else {
@@ -199,7 +200,7 @@ fn get_reduced_motion(support: &JavaSupport, env: &mut JNIEnv) -> Result<Reduced
 }
 
 #[cfg(feature = "accent-color")]
-fn get_accent_color(support: &JavaSupport, env: &mut JNIEnv) -> Result<AccentColor> {
+fn get_accent_color(support: &MundySupport, env: &mut Env) -> Result<AccentColor> {
     let color = support.get_accent_color(env)? as u32;
     // Color ints in Android APIs always define colors in the
     // sRGB color space, packed into an int as #AARRGGBB:

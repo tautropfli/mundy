@@ -28,7 +28,14 @@ trunk serve examples/egui/index.html
 The easiest way to run the examples on Android
 is to use [xbuild](https://github.com/rust-mobile/xbuild):
 
+You might need to install the git version if you have [linker troubles](https://github.com/rust-mobile/xbuild/issues/169).
+
 ```shell
+x devices
+# List of devices attached
+# host                                              Linux               linux x64           ...
+# adb:emulator-...                                 emu64xa             android x64          ...
+
 x run --device adb:emulator-... -p winit-example
 x run --device adb:emulator-... -p egui-example
 ```

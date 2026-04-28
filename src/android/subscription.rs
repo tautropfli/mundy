@@ -1,8 +1,7 @@
 use super::result::Result;
-use super::support::{java_vm, JavaSupport};
+use super::support::{java_vm, MundySupportRef};
 use crate::callback_utils::{CallbackHandle, Callbacks};
 use std::mem;
-use std::panic::catch_unwind;
 use std::sync::RwLock;
 
 pub(crate) type CallbackFn = Box<dyn Fn() + Send + Sync>;
@@ -48,28 +47,24 @@ pub(crate) fn on_configuration_changed() {
     }
 }
 
+pub(crate) fn on_preferences_changed() {
+    on_configuration_changed();
+}
+
 static CALLBACKS: RwLock<Callbacks<CallbackFn>> = RwLock::new(Callbacks::new());
 
 fn subscribe_java() -> Result<()> {
-    let vm = java_vm()?;
-    let mut env = vm.attach_current_thread()?;
-    let support = JavaSupport::get()?;
-    support.subscribe(&mut env)?;
-    Ok(())
+    java_vm().attach_current_thread(|env| {
+        let support = MundySupportRef::get()?;
+        support.subscribe(env)?;
+        Ok(())
+    })
 }
 
 fn unsubscribe_java() -> Result<()> {
-    let vm = java_vm()?;
-    let mut env = vm.attach_current_thread()?;
-    let support = JavaSupport::get()?;
-    support.unsubscribe(&mut env)?;
-    Ok(())
-}
-
-// This method is called from Java using a `native` method.
-// The [JNI Design Overview](https://docs.oracle.com/javase/1.5.0/docs/guide/jni/spec/design.html)
-// documents the name mangling scheme.
-#[no_mangle]
-pub(crate) extern "C" fn Java_garden_tau_mundy_MundySupport_onPreferencesChanged() {
-    _ = catch_unwind(on_configuration_changed);
+    java_vm().attach_current_thread(|env| {
+        let support = MundySupportRef::get()?;
+        support.unsubscribe(env)?;
+        Ok(())
+    })
 }
