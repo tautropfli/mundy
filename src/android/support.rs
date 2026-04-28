@@ -1,115 +1,109 @@
 use super::result::ArcError;
-use super::subscription::Java_garden_tau_mundy_MundySupport_onPreferencesChanged;
-use jni::objects::{GlobalRef, JClass, JObject, JValue};
-use jni::{JNIEnv, JavaVM, NativeMethod};
-use std::fs;
+use super::subscription;
+use jni::objects::JString;
+use jni::refs::{Global, LoaderContext};
+use jni::{bind_java_type, Env, JavaVM};
 use std::path::PathBuf;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
+use std::{fs, ops};
 
 type Result<T, E = BoxedError> = std::result::Result<T, E>;
 type BoxedError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(Clone)]
-pub(crate) struct JavaSupport {
-    global_ref: GlobalRef,
+pub(crate) struct MundySupportRef {
+    global_ref: Arc<Global<MundySupport<'static>>>,
 }
 
-impl JavaSupport {
+impl ops::Deref for MundySupportRef {
+    type Target = MundySupport<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.global_ref
+    }
+}
+
+impl MundySupportRef {
     pub(crate) fn get() -> Result<Self> {
-        static INSTANCE: LazyLock<Result<JavaSupport, ArcError>> =
-            LazyLock::new(|| JavaSupport::from_android_context().map_err(ArcError::from));
+        static INSTANCE: LazyLock<Result<MundySupportRef, ArcError>> =
+            LazyLock::new(|| MundySupportRef::from_android_context().map_err(ArcError::from));
         INSTANCE.clone().map_err(Into::into)
     }
 
     fn from_android_context() -> Result<Self> {
-        let vm = java_vm()?;
-        let mut env = vm.attach_current_thread()?;
-        let context = android_content_context();
-        let class = inject_dex_class(&mut env, &context)?;
-        let instance = env.new_object(
-            &class,
-            "(Landroid/content/Context;)V",
-            &[JValue::from(&context)],
-        )?;
-        let global_ref = env.new_global_ref(instance)?;
-        Ok(Self { global_ref })
+        java_vm().attach_current_thread(|env| {
+            let context = android_content_context(env);
+            inject_dex_class(env, &context)?;
+            let mundy_support = MundySupport::new(env, &context)?;
+            let global_ref = Arc::new(env.new_global_ref(mundy_support)?);
+            Ok(Self { global_ref })
+        })
     }
+}
 
-    #[cfg(feature = "color-scheme")]
-    pub(crate) fn get_night_mode(&self, env: &mut JNIEnv) -> Result<bool> {
-        Ok(env
-            .call_method(&self.global_ref, "getNightMode", "()Z", &[])?
-            .z()
-            .expect("method to return a boolean"))
-    }
+pub(crate) fn java_vm() -> JavaVM {
+    let ctx = ndk_context::android_context();
+    // SAFETY: ndk_context gives us a valid pointer.
+    unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
+}
 
-    #[cfg(feature = "contrast")]
-    pub(crate) fn get_high_contrast(&self, env: &mut JNIEnv) -> Result<bool> {
-        Ok(env
-            .call_method(&self.global_ref, "getHighContrast", "()Z", &[])?
-            .z()
-            .expect("method to return a boolean"))
-    }
+bind_java_type! {
+    pub(crate) MundySupport => garden.tau.mundy.MundySupport,
+    type_map = {
+        AndroidContext => android.content.Context
+    },
+    constructors {
+        fn new(context: AndroidContext),
+    },
+    methods {
+        pub(crate) fn get_night_mode() -> bool,
+        pub(crate) fn get_high_contrast() -> bool,
+        pub(crate) fn get_prefers_reduced_motion() -> bool,
+        pub(crate) fn get_accent_color() -> i32,
+        pub(crate) fn subscribe(),
+        pub(crate) fn unsubscribe(),
+    },
+    native_methods {
+        extern fn on_preferences_changed(),
+    },
+}
 
-    #[cfg(feature = "reduced-motion")]
-    pub(crate) fn get_prefers_reduced_motion(&self, env: &mut JNIEnv) -> Result<bool> {
-        Ok(env
-            .call_method(&self.global_ref, "getPrefersReducedMotion", "()Z", &[])?
-            .z()
-            .expect("method to return a float"))
-    }
+impl MundySupportNativeInterface for MundySupportAPI {
+    type Error = jni::errors::Error;
 
-    #[cfg(feature = "accent-color")]
-    pub(crate) fn get_accent_color(&self, env: &mut JNIEnv) -> Result<i32> {
-        Ok(env
-            .call_method(&self.global_ref, "getAccentColor", "()I", &[])?
-            .i()
-            .expect("method to return an int"))
-    }
-
-    pub(crate) fn subscribe(&self, env: &mut JNIEnv) -> Result<()> {
-        env.call_method(&self.global_ref, "subscribe", "()V", &[])?;
-        Ok(())
-    }
-
-    pub(crate) fn unsubscribe(&self, env: &mut JNIEnv) -> Result<()> {
-        env.call_method(&self.global_ref, "unsubscribe", "()V", &[])?;
+    fn on_preferences_changed<'local>(
+        _env: &mut ::jni::Env<'local>,
+        _this: MundySupport<'local>,
+    ) -> ::std::result::Result<(), Self::Error> {
+        subscription::on_preferences_changed();
         Ok(())
     }
 }
 
-pub(crate) fn java_vm() -> Result<JavaVM> {
+fn android_content_context<'env>(env: &mut Env<'env>) -> AndroidContext<'env> {
     let ctx = ndk_context::android_context();
     // SAFETY: ndk_context gives us a valid pointer.
-    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }?;
-    Ok(vm)
-}
-
-pub(crate) fn android_content_context<'local>() -> JObject<'local> {
-    let ctx = ndk_context::android_context();
-    // SAFETY: ndk_context gives us a valid pointer.
-    unsafe { JObject::from_raw(ctx.context().cast()) }
+    unsafe { AndroidContext::from_raw(env, ctx.context().cast()) }
 }
 
 // This is again adapted from netwatcher's source:
 // <https://github.com/thombles/netwatcher/blob/f1353ba6b9a9e4e28a223a317564a3b34a649aae/src/watch_android.rs#L94>
-fn inject_dex_class<'a>(
-    env: &mut JNIEnv<'a>,
-    context_obj: &jni::objects::JObject,
-) -> Result<JClass<'a>> {
+fn inject_dex_class(env: &mut Env<'_>, context: &AndroidContext<'_>) -> Result<()> {
+    static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 1 {
+        panic!("Who dare call me");
+    }
+
     const MUNDY_DEX_BYTES: &[u8] = include_bytes!(env!("MUNDY_DEX_PATH"));
 
     // to enable backwards compat to API level 21, write to disk instead of loading in-memory
-    let cache_dir = env.call_method(context_obj, "getCodeCacheDir", "()Ljava/io/File;", &[])?;
-    let cache_dir_path = env.call_method(
-        &cache_dir.l()?,
-        "getAbsolutePath",
-        "()Ljava/lang/String;",
-        &[],
-    )?;
-    let cache_dir_jstring = cache_dir_path.l()?;
-    let cache_dir_rust: String = env.get_string(&cache_dir_jstring.into())?.into();
-    let temp_dex_path = PathBuf::from(cache_dir_rust.clone()).join("mundy.dex");
+    let cache_dir = context.get_code_cache_dir(env)?;
+    let cache_dir_path_jstring = cache_dir.get_absolute_path(env)?;
+    let cache_dir_path: String = cache_dir_path_jstring.try_to_string(env)?;
+    let temp_dex_path = PathBuf::from(cache_dir_path).join("mundy.dex");
+    // delete the file if cleanup failed in previous run
+    _ = fs::remove_file(&temp_dex_path);
     fs::write(&temp_dex_path, MUNDY_DEX_BYTES)?;
 
     // dex file must not be writable or it won't be loaded
@@ -117,44 +111,48 @@ fn inject_dex_class<'a>(
     perms.set_readonly(true);
     fs::set_permissions(&temp_dex_path, perms)?;
 
-    let dex_class_loader_class = env.find_class("dalvik/system/DexClassLoader")?;
-    let parent_loader = env.call_method(
-        context_obj,
-        "getClassLoader",
-        "()Ljava/lang/ClassLoader;",
-        &[],
-    )?;
-
-    let temp_dex_path_str = temp_dex_path.to_string_lossy().to_string();
+    let parent_loader = context.get_class_loader(env)?;
+    let temp_dex_path_str = temp_dex_path.to_string_lossy();
     let temp_dex_path_jstring = env.new_string(&temp_dex_path_str)?;
-    let cache_dir_jstring = env.new_string(&cache_dir_rust)?;
-    let dex_loader = env.new_object(
-        &dex_class_loader_class,
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/ClassLoader;)V",
-        &[
-            (&temp_dex_path_jstring).into(),
-            (&cache_dir_jstring).into(),
-            (&JObject::null()).into(),
-            (&parent_loader.l()?).into(),
-        ],
+    let dex_loader = DexClassLoader::new(
+        env,
+        temp_dex_path_jstring,
+        cache_dir_path_jstring,
+        JString::null(),
+        parent_loader,
     )?;
+    let _mundy_support_api =
+        MundySupportAPI::get(env, &LoaderContext::Loader(&dex_loader.as_class_loader()))?;
 
-    let class_name_str = env.new_string("garden.tau.mundy.MundySupport")?;
-    let support_class_obj = env.call_method(
-        &dex_loader,
-        "loadClass",
-        "(Ljava/lang/String;)Ljava/lang/Class;",
-        &[(&class_name_str).into()],
-    )?;
-    let support_class: JClass = support_class_obj.l()?.into();
-    let _ = fs::remove_file(&temp_dex_path);
+    _ = fs::remove_file(&temp_dex_path);
 
-    let native_methods = [NativeMethod {
-        name: "onPreferencesChanged".into(),
-        sig: "()V".into(),
-        fn_ptr: Java_garden_tau_mundy_MundySupport_onPreferencesChanged as *mut _,
-    }];
-    env.register_native_methods(&support_class, &native_methods)?;
+    Ok(())
+}
 
-    Ok(support_class)
+bind_java_type! {
+    AndroidContext => android.content.Context,
+    type_map = {
+        JavaFile => java.io.File,
+    },
+    methods {
+        fn get_code_cache_dir() -> JavaFile,
+        fn get_class_loader() -> JClassLoader
+    }
+}
+
+bind_java_type! {
+    DexClassLoader => dalvik.system.DexClassLoader,
+    constructors {
+        fn new(dex_path: JString, optimized_directory: JString, library_search_path: JString, parent: JClassLoader),
+    },
+    is_instance_of = {
+        class_loader: JClassLoader,
+    },
+}
+
+bind_java_type! {
+    JavaFile => java.io.File,
+    methods {
+        fn get_absolute_path() -> JString
+    }
 }
