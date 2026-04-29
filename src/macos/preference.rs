@@ -9,6 +9,8 @@ use crate::Contrast;
 use crate::ReducedMotion;
 #[cfg(feature = "reduced-transparency")]
 use crate::ReducedTransparency;
+#[cfg(feature = "scrollbar-visibility")]
+use crate::ScrollbarVisibility;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Preference {
@@ -18,6 +20,8 @@ pub(crate) enum Preference {
     Accessibility(AccessibilityPreferences),
     #[cfg(feature = "accent-color")]
     AccentColor(AccentColor),
+    #[cfg(feature = "scrollbar-visibility")]
+    ScrollbarVisibility(ScrollbarVisibility),
 }
 
 #[cfg(feature = "_macos-accessibility")]
@@ -53,6 +57,8 @@ impl Preference {
             }
             #[cfg(feature = "accent-color")]
             Preference::AccentColor(v) => preferences.accent_color = v,
+            #[cfg(feature = "scrollbar-visibility")]
+            Preference::ScrollbarVisibility(v) => preferences.scrollbar_visibility = v,
         };
         preferences
     }

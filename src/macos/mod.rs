@@ -12,6 +12,8 @@ use crate::DoubleClickInterval;
 use crate::ReducedMotion;
 #[cfg(feature = "reduced-transparency")]
 use crate::ReducedTransparency;
+#[cfg(feature = "scrollbar-visibility")]
+use crate::ScrollbarVisibility;
 #[cfg(feature = "accent-color")]
 use crate::{AccentColor, Srgba};
 use crate::{AvailablePreferences, Interest};
@@ -27,6 +29,8 @@ use objc2_app_kit::NSWorkspace;
 use objc2_app_kit::{NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua};
 #[cfg(feature = "accent-color")]
 use objc2_app_kit::{NSColor, NSColorSpace};
+#[cfg(feature = "scrollbar-visibility")]
+use objc2_app_kit::{NSScroller, NSScrollerStyle};
 use objc2_foundation::MainThreadMarker;
 #[cfg(feature = "color-scheme")]
 use objc2_foundation::NSArray;
@@ -55,7 +59,7 @@ pub(crate) fn stream(interest: Interest) -> PreferencesStream {
     let (sender, receiver) = mpsc::unbounded();
     #[cfg(feature = "_macos-observable")]
     let observer = Observer::register(&application, sender, interest);
-    let initial_value = get_preferences(interest, &application);
+    let initial_value = get_preferences(interest, &application, mtm);
 
     #[cfg(feature = "_macos-observable")]
     let inner = stream::once(initial_value)
@@ -87,7 +91,7 @@ pub(crate) fn once_blocking(
     let mtm = MainThreadMarker::new()
         .expect("on macOS, `once_blocking` must be called from the main thread");
     let application = NSApplication::sharedApplication(mtm);
-    Some(get_preferences(interest, &application))
+    Some(get_preferences(interest, &application, mtm))
 }
 
 #[cfg(feature = "_macos-observable")]
@@ -129,6 +133,8 @@ fn get_preferences(
     interest: Interest,
     #[cfg_attr(not(feature = "color-scheme"), expect(unused_variables))]
     application: &NSApplication,
+    #[cfg_attr(not(feature = "scrollbar-visibility"), expect(unused_variables))]
+    mtm: MainThreadMarker,
 ) -> AvailablePreferences {
     let mut preferences = AvailablePreferences::default();
 
@@ -160,6 +166,11 @@ fn get_preferences(
     #[cfg(feature = "double-click-interval")]
     if interest.is(Interest::DoubleClickInterval) {
         preferences.double_click_interval = get_double_click_interval();
+    }
+
+    #[cfg(feature = "scrollbar-visibility")]
+    if interest.is(Interest::ScrollbarVisibility) {
+        preferences.scrollbar_visibility = get_scrollbar_visibility(mtm);
     }
 
     preferences
@@ -235,4 +246,14 @@ fn get_double_click_interval() -> DoubleClickInterval {
     // NSTimeInterval: A number of seconds.
     let interval = NSEvent::doubleClickInterval();
     DoubleClickInterval(Duration::try_from_secs_f64(interval).ok())
+}
+
+#[cfg(feature = "scrollbar-visibility")]
+fn get_scrollbar_visibility(mtm: MainThreadMarker) -> ScrollbarVisibility {
+    let scroller_style = NSScroller::preferredScrollerStyle(mtm);
+    match scroller_style {
+        s if s == NSScrollerStyle::Legacy => ScrollbarVisibility::Always,
+        s if s == NSScrollerStyle::Overlay => ScrollbarVisibility::Auto,
+        _ => ScrollbarVisibility::NoPreference,
+    }
 }

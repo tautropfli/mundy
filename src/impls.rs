@@ -32,6 +32,7 @@ macro_rules! impls {
     (@type reduced_transparency) => { ReducedTransparency };
     (@type accent_color) => { AccentColor };
     (@type double_click_interval) => { DoubleClickInterval };
+    (@type scrollbar_visibility) => { ScrollbarVisibility };
     (@struct { $($feature:literal $setting:ident),* }) => {
         #[derive(Debug, Default, Clone, Copy, PartialEq)]
         pub(crate) struct AvailablePreferences {

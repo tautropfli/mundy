@@ -6,6 +6,8 @@ use crate::Contrast;
 use crate::DoubleClickInterval;
 #[cfg(feature = "reduced-motion")]
 use crate::ReducedMotion;
+#[cfg(feature = "scrollbar-visibility")]
+use crate::ScrollbarVisibility;
 #[cfg(feature = "accent-color")]
 use crate::{AccentColor, Srgba};
 
@@ -48,7 +50,7 @@ fn log_message_error(err: &zbus::Error) {
 fn log_message_error(_err: &zbus::Error) {}
 
 const APPEARANCE: &str = "org.freedesktop.appearance";
-#[cfg(any(feature = "reduced-motion", feature = "accent-color"))]
+#[cfg(any(feature = "reduced-motion", feature = "accent-color", feature = "scrollbar-visibility"))]
 const GNOME_INTERFACE: &str = "org.gnome.desktop.interface";
 #[cfg(feature = "double-click-interval")]
 const GNOME_PERIPHERALS_MOUSE: &str = "org.gnome.desktop.peripherals.mouse";
@@ -66,6 +68,8 @@ const ENABLE_ANIMATIONS: &str = "enable-animations";
 const REDUCED_MOTION: &str = "reduced-motion";
 #[cfg(feature = "accent-color")]
 const GTK_THEME: &str = "gtk-theme";
+#[cfg(feature = "scrollbar-visibility")]
+const OVERLAY_SCROLLING: &str = "overlay-scrolling";
 
 pub(crate) type PreferencesStream = stream::Boxed<AvailablePreferences>;
 
@@ -191,6 +195,10 @@ async fn apply_message(
         (GNOME_PERIPHERALS_MOUSE, DOUBLE_CLICK) if interest.is(Interest::DoubleClickInterval) => {
             preferences.double_click_interval = parse_double_click(value);
         }
+        #[cfg(feature = "scrollbar-visibility")]
+        (GNOME_INTERFACE, OVERLAY_SCROLLING) if interest.is(Interest::ScrollbarVisibility) => {
+            preferences.scrollbar_visibility = parse_overlay_scrolling(value);
+        }
         _ => {}
     }
     Ok(())
@@ -250,6 +258,13 @@ async fn initial_preferences(
                 .await
                 .map(parse_double_click)
                 .unwrap_or_default();
+    }
+    #[cfg(feature = "scrollbar-visibility")]
+    if interest.is(Interest::ScrollbarVisibility) {
+        preferences.scrollbar_visibility = read_setting(proxy, GNOME_INTERFACE, OVERLAY_SCROLLING)
+            .await
+            .map(parse_overlay_scrolling)
+            .unwrap_or_default();
     }
     Ok((_state, preferences))
 }
@@ -412,7 +427,7 @@ fn parse_enable_animation(value: Value) -> ReducedMotion {
 }
 
 // Stored as integer (milliseconds):
-// https://gitlab.gnome.org/GNOME/gsettings-desktop-schemas/-/blob/6ad9aaea4dc2929770f2fdf9112280aa5081b6de/schemas/org.gnome.desktop.peripherals.gschema.xml.in#L139
+// <https://gitlab.gnome.org/GNOME/gsettings-desktop-schemas/-/blob/6ad9aaea4dc2929770f2fdf9112280aa5081b6de/schemas/org.gnome.desktop.peripherals.gschema.xml.in#L139>
 #[cfg(feature = "double-click-interval")]
 fn parse_double_click(value: Value) -> DoubleClickInterval {
     // We can't directly convert value to u64 because the underlying value is an i32.
@@ -421,6 +436,17 @@ fn parse_double_click(value: Value) -> DoubleClickInterval {
         .and_then(|v| u64::try_from(v).ok())
         .map(Duration::from_millis);
     DoubleClickInterval(value)
+}
+
+// Stored as a boolean:
+// <https://gitlab.gnome.org/GNOME/gsettings-desktop-schemas/-/blob/6ad9aaea4dc2929770f2fdf9112280aa5081b6de/schemas/org.gnome.desktop.interface.gschema.xml.in#L261>
+#[cfg(feature = "scrollbar-visibility")]
+fn parse_overlay_scrolling(value: Value) -> ScrollbarVisibility {
+    match bool::try_from(value) {
+        Ok(false) => ScrollbarVisibility::Always,
+        Ok(true) => ScrollbarVisibility::Auto,
+        Err(_) => ScrollbarVisibility::NoPreference,
+    }
 }
 
 #[cfg(feature = "accent-color")]

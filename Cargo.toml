@@ -63,17 +63,17 @@ tokio = ["zbus/tokio", "dep:tokio"]
 callback = ["dep:beul", "dep:futures-channel"]
 color-scheme = [
     "_macos-observable",
-    "_winrt",
+    "_windows-ui-settings",
     "dep:dispatch",
     "objc2-app-kit/NSAppearance",
     "objc2-foundation/NSKeyValueObserving",
 ]
 contrast = ["_macos-accessibility", "_winrt"]
-reduced-motion = ["_macos-accessibility", "_gnome_only", "_winrt"]
-reduced-transparency = ["_macos-accessibility", "_winrt"]
+reduced-motion = ["_macos-accessibility", "_gnome_only", "_windows-ui-settings"]
+reduced-transparency = ["_macos-accessibility", "_windows-ui-settings"]
 accent-color = [
     "_macos-observable",
-    "_winrt",
+    "_windows-ui-settings",
     "web-sys/Comment",
     "web-sys/CssStyleDeclaration",
     "web-sys/Document",
@@ -90,7 +90,16 @@ double-click-interval = [
     "objc2-app-kit/NSEvent",
     "windows/Win32_UI_Input_KeyboardAndMouse",
 ]
-_all-preferences = ["color-scheme", "contrast", "reduced-motion", "reduced-transparency", "accent-color", "double-click-interval"]
+scrollbar-visibility = ["_gnome_only", "_windows-ui-settings"]
+_all-preferences = [
+    "color-scheme",
+    "contrast",
+    "reduced-motion",
+    "reduced-transparency",
+    "scrollbar-visibility",
+    "accent-color",
+    "double-click-interval",
+]
 _macos-accessibility = [
     "_macos-observable",
     "objc2-app-kit/NSWorkspace",
@@ -99,6 +108,7 @@ _macos-accessibility = [
 _macos-observable = ["dep:futures-channel"]
 _gnome_only = []
 _winrt = ["windows/UI_ViewManagement", "windows/Win32_System_WinRT"]
+_windows-ui-settings = ["_winrt"]
 
 [workspace]
 resolver = "2"
