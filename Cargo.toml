@@ -98,7 +98,7 @@ _macos-accessibility = [
 ]
 _macos-observable = ["dep:futures-channel"]
 _gnome_only = []
-_winrt = ["windows/UI_ViewManagement", "windows/Win32_System_Com"]
+_winrt = ["windows/UI_ViewManagement", "windows/Win32_System_WinRT"]
 
 [workspace]
 resolver = "2"

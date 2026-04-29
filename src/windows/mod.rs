@@ -12,8 +12,6 @@ use crate::ReducedTransparency;
 use crate::{AccentColor, Srgba};
 use crate::{AvailablePreferences, Interest};
 use cfg_if::cfg_if;
-#[cfg(feature = "_winrt")]
-use com_thread::ComThreadGuard;
 use futures_channel::mpsc;
 use futures_lite::{stream, Stream, StreamExt as _};
 use hook::{register_windows_hook, WindowsHookGuard};
@@ -22,8 +20,6 @@ use std::any::Any;
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
-#[cfg(feature = "_winrt")]
-use windows::Win32::System::Com::COINIT_MULTITHREADED;
 #[cfg(feature = "double-click-interval")]
 use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::WindowsAndMessaging::WM_SETTINGCHANGE;
@@ -41,8 +37,6 @@ use windows::UI::ViewManagement::UIColorType;
 ))]
 use windows::UI::ViewManagement::UISettings;
 
-#[cfg(feature = "_winrt")]
-mod com_thread;
 mod hook;
 mod main_thread;
 
@@ -128,30 +122,12 @@ cfg_if! {
     }
 }
 
-#[cfg(all(feature = "log", feature = "_winrt"))]
-fn log_init_error(error: windows::core::Error) {
-    log::warn!("failed to initialize COM: {error}");
-}
-
-#[cfg(all(not(feature = "log"), feature = "_winrt"))]
-fn log_init_error(_error: windows::core::Error) {}
-
 fn stream_in_com_thread(
     sender: mpsc::UnboundedSender<AvailablePreferences>,
     msg_tx: std_mpsc::Sender<Message>,
     msg_rx: std_mpsc::Receiver<Message>,
     interest: Interest,
 ) {
-    #[cfg(feature = "_winrt")]
-    let _guard = match ComThreadGuard::new(COINIT_MULTITHREADED) {
-        Ok(g) => g,
-        Err(error) => {
-            log_init_error(error);
-            _ = sender.unbounded_send(AvailablePreferences::default());
-            return;
-        }
-    };
-
     let settings = Settings::new();
     let preferences = read_preferences(&settings, interest);
     _ = sender.unbounded_send(preferences);
@@ -169,15 +145,6 @@ fn stream_in_com_thread(
 }
 
 fn once_blocking_in_com_thread(interest: Interest) -> AvailablePreferences {
-    #[cfg(feature = "_winrt")]
-    let _guard = match ComThreadGuard::new(COINIT_MULTITHREADED) {
-        Ok(g) => g,
-        Err(error) => {
-            log_init_error(error);
-            return AvailablePreferences::default();
-        }
-    };
-
     let settings = Settings::new();
     read_preferences(&settings, interest)
 }

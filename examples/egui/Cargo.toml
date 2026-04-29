@@ -14,7 +14,7 @@ crate-type = [
 [dependencies]
 bevy_color.workspace = true
 # we disable default features because the default feature `accesskit` is not compatible with `android-native-activity`.
-eframe = { version = "0.33.0", default-features = false, features = ["android-native-activity", "default_fonts", "glow", "wayland", "web_screen_reader", "x11"] }
+eframe = { version = "0.33.0", default-features = false, features = ["android-native-activity", "default_fonts", "wgpu", "wayland", "web_screen_reader", "x11"] }
 
 egui-theme-switch = "0.5.0"
 egui_demo_lib = "0.33.0"
@@ -29,6 +29,9 @@ android_logger = "0.15.1"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3.4"
+
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "27", features = ["dx12"] }
 
 [package.metadata.android]
 build_targets = ["armv7-linux-androideabi", "aarch64-linux-android"]
