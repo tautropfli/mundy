@@ -14,6 +14,8 @@ use crate::stream_utils::{Left, Right, Scan};
 use crate::{AvailablePreferences, Interest};
 use cfg_if::cfg_if;
 use futures_lite::{stream, FutureExt as _, Stream, StreamExt as _};
+#[cfg(feature = "accent-color")]
+use std::env;
 use std::time::Duration;
 use zbus::{
     proxy::SignalStream,
@@ -46,7 +48,7 @@ fn log_message_error(err: &zbus::Error) {
 fn log_message_error(_err: &zbus::Error) {}
 
 const APPEARANCE: &str = "org.freedesktop.appearance";
-#[cfg(feature = "reduced-motion")]
+#[cfg(any(feature = "reduced-motion", feature = "accent-color"))]
 const GNOME_INTERFACE: &str = "org.gnome.desktop.interface";
 #[cfg(feature = "double-click-interval")]
 const GNOME_PERIPHERALS_MOUSE: &str = "org.gnome.desktop.peripherals.mouse";
@@ -62,6 +64,8 @@ const ACCENT_COLOR: &str = "accent-color";
 const ENABLE_ANIMATIONS: &str = "enable-animations";
 #[cfg(feature = "reduced-motion")]
 const REDUCED_MOTION: &str = "reduced-motion";
+#[cfg(feature = "accent-color")]
+const GTK_THEME: &str = "gtk-theme";
 
 pub(crate) type PreferencesStream = stream::Boxed<AvailablePreferences>;
 
@@ -174,7 +178,14 @@ async fn apply_message(
         }
         #[cfg(feature = "accent-color")]
         (APPEARANCE, ACCENT_COLOR) if interest.is(Interest::AccentColor) => {
+            _state.has_accent_color = true;
             preferences.accent_color = parse_accent_color(value);
+        }
+        #[cfg(feature = "accent-color")]
+        (GNOME_INTERFACE, GTK_THEME)
+            if interest.is(Interest::AccentColor) && !_state.has_accent_color && is_ubuntu() =>
+        {
+            preferences.accent_color = parse_accent_color_from_yaru_theme(value);
         }
         #[cfg(feature = "double-click-interval")]
         (GNOME_PERIPHERALS_MOUSE, DOUBLE_CLICK) if interest.is(Interest::DoubleClickInterval) => {
@@ -221,10 +232,16 @@ async fn initial_preferences(
     }
     #[cfg(feature = "accent-color")]
     if interest.is(Interest::AccentColor) {
-        preferences.accent_color = read_setting(proxy, APPEARANCE, ACCENT_COLOR)
-            .await
-            .map(parse_accent_color)
-            .unwrap_or_default();
+        let accent_color_value = read_setting(proxy, APPEARANCE, ACCENT_COLOR).await;
+        if let Some(accent_color_value) = accent_color_value {
+            _state.has_accent_color = true;
+            preferences.accent_color = parse_accent_color(accent_color_value);
+        } else if is_ubuntu() {
+            preferences.accent_color = read_setting(proxy, GNOME_INTERFACE, GTK_THEME)
+                .await
+                .map(parse_accent_color_from_yaru_theme)
+                .unwrap_or_default()
+        }
     }
     #[cfg(feature = "double-click-interval")]
     if interest.is(Interest::DoubleClickInterval) {
@@ -277,10 +294,18 @@ async fn setting_changed(
 }
 
 fn signal_filter(
-    #[cfg_attr(not(feature = "_gnome_only"), expect(unused_variables))] interest: Interest,
+    #[cfg_attr(
+        not(any(feature = "_gnome_only", feature = "accent-color")),
+        expect(unused_variables)
+    )]
+    interest: Interest,
 ) -> &'static [(u8, &'static str)] {
     #[cfg(feature = "_gnome_only")]
     if interest.is(Interest::GnomeOnly) {
+        return &[];
+    }
+    #[cfg(feature = "accent-color")]
+    if interest.is(Interest::AccentColor) && is_ubuntu() {
         return &[];
     }
     &[(0, APPEARANCE)]
@@ -327,6 +352,46 @@ fn parse_accent_color(value: Value) -> AccentColor {
     }
 }
 
+// Ubuntu 24.04 LTS supports accent colors but not yet the standardized `accent-color` key.
+// This workaround can be removed once it goes EOL which is after May 2029 (technically longer with Ubuntu Pro,
+// but I don't particularly care about those users).
+#[cfg(feature = "accent-color")]
+fn parse_accent_color_from_yaru_theme(value: Value) -> AccentColor {
+    let Ok(theme): Result<&str, _> = value.downcast_ref() else {
+        return AccentColor(None);
+    };
+    let theme = theme.strip_suffix("-dark").unwrap_or(theme);
+    // Theme names copied from:
+    // <https://github.com/ubuntu/yaru.dart/blob/c6bea50559e603e50fe42916b547df26fbfc7f15/lib/src/settings/inherited_theme.dart#L204-L214>
+    // Color values copied from:
+    // <https://github.com/ubuntu/yaru/blob/f01c3e9a257296242806f8e0c5d4a660516f2181/common/accent-colors.scss.in>
+    let color = match theme {
+        "Yaru" => 0xE95420,
+        "Yaru-prussiangreen" => 0x308280,
+        "Yaru-bark" => 0x787859,
+        "Yaru-blue" => 0x0073E5,
+        "Yaru-wartybrown" => 0xB39169,
+        "Yaru-magenta" => 0xB34CB3,
+        "Yaru-olive" => 0x4B8501,
+        "Yaru-purple" => 0x7764D8,
+        "Yaru-sage" => 0x657B69,
+        "Yaru-red" => 0xDA3450,
+        "Yaru-viridian" => 0x03875B,
+        _ => return AccentColor(None),
+    };
+    AccentColor(Some(srgba_from_u32_rgb(color)))
+}
+
+#[cfg(feature = "accent-color")]
+fn srgba_from_u32_rgb(value: u32) -> Srgba {
+    Srgba::from_u8_array([
+        (value >> 16 & 0xFF) as u8,
+        (value >> 8 & 0xFF) as u8,
+        (value & 0xFF) as u8,
+        0xFF,
+    ])
+}
+
 #[cfg(feature = "reduced-motion")]
 fn parse_reduced_motion(value: Value) -> ReducedMotion {
     match u32::try_from(value) {
@@ -358,8 +423,20 @@ fn parse_double_click(value: Value) -> DoubleClickInterval {
     DoubleClickInterval(value)
 }
 
+#[cfg(feature = "accent-color")]
+fn is_ubuntu() -> bool {
+    use std::sync::LazyLock;
+    static IS_UBUNTU: LazyLock<bool> = LazyLock::new(|| {
+        let current_desktop = env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+        current_desktop.split(':').any(|name| name == "ubuntu")
+    });
+    *IS_UBUNTU
+}
+
 #[derive(Debug, Default)]
 struct State {
     #[cfg(feature = "reduced-motion")]
     has_reduced_motion_setting: bool,
+    #[cfg(feature = "accent-color")]
+    has_accent_color: bool,
 }
