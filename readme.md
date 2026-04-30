@@ -13,6 +13,7 @@ The following preferences are supported:
 * [`ReducedMotion`](https://docs.rs/mundy/latest/mundy/enum.ReducedMotion.html)—The user's reduced motion preference.
 * [`ReducedTransparency`](https://docs.rs/mundy/latest/mundy/enum.ReducedTransparency.html)—The user's reduced transparency preference.
 * [`DoubleClickInterval`](https://docs.rs/mundy/latest/mundy/struct.DoubleClickInterval.html)—The maximum amount of time allowed between the first and second click.
+* [`ScrollbarVisibility`](https://docs.rs/mundy/latest/mundy/struct.ScrollbarVisibility.html)—Whether the scrollbar should be always visible or auto-hide.
 
 ## Example
 ```rust,no_run

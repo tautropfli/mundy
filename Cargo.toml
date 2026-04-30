@@ -1,7 +1,7 @@
 [package]
 name = "mundy"
 description = "Reads various system-level accessibility and UI preferences"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 license = "Apache-2.0"
 exclude = ["Justfile", "_typos.toml", "notes.md", "scripts/", ".github/"]

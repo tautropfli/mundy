@@ -1,4 +1,10 @@
 # Changelog
+## 0.2.3
+* Fixed a segfault on Windows.
+* Added a new [`ScrollbarVisibility`](https://docs.rs/mundy/0.2.3/mundy/struct.ScrollbarVisibility.html) preference.
+* Added support for Ubuntu's legacy accent colors (still used in 24.04 LTS).
+* Updated the `jni` dependency to `0.22`.
+
 ## 0.2.2
 * Added support for the new `reduced-motion` preference from the [XDG Settings portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Settings.html).
 
