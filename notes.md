@@ -9,11 +9,6 @@
   * Windows: https://learn.microsoft.com/en-us/previous-versions/windows/apps/hh452990(v=win.10)
   * macOS: ?
   * web: prefers-reduced-data (not yet implemented anywhere)
-* Scroll Bar Style (Overlay vs always visible)
-  * GNOME: org.gnome.desktop.interface overlay-scrolling
-  * Windows: UISettings.AutoHideScrollBars
-  * macOS: NSScroller.preferredScrollerStyle
-  * Web: n/a
 * Text scaling factor
   * GNOME: org.gnome.desktop.interface text-scaling-factor
   * Windows: UISettings.TextScaleFactor
