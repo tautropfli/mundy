@@ -8,6 +8,8 @@ use crate::DoubleClickInterval;
 use crate::ReducedMotion;
 #[cfg(feature = "reduced-transparency")]
 use crate::ReducedTransparency;
+#[cfg(feature = "scrollbar-visibility")]
+use crate::ScrollbarVisibility;
 #[cfg(feature = "accent-color")]
 use crate::{AccentColor, Srgba};
 use crate::{AvailablePreferences, Interest};
@@ -29,12 +31,7 @@ use windows::UI::Color;
 use windows::UI::ViewManagement::AccessibilitySettings;
 #[cfg(any(feature = "color-scheme", feature = "accent-color"))]
 use windows::UI::ViewManagement::UIColorType;
-#[cfg(any(
-    feature = "color-scheme",
-    feature = "accent-color",
-    feature = "reduced-motion",
-    feature = "reduced-transparency"
-))]
+#[cfg(feature = "_windows-ui-settings")]
 use windows::UI::ViewManagement::UISettings;
 
 mod hook;
@@ -150,12 +147,7 @@ fn once_blocking_in_com_thread(interest: Interest) -> AvailablePreferences {
 }
 
 struct Settings {
-    #[cfg(any(
-        feature = "color-scheme",
-        feature = "accent-color",
-        feature = "reduced-motion",
-        feature = "reduced-transparency"
-    ))]
+    #[cfg(feature = "_windows-ui-settings")]
     ui: Option<UISettings>,
     #[cfg(feature = "contrast")]
     accessibility: Option<AccessibilitySettings>,
@@ -164,12 +156,7 @@ struct Settings {
 impl Settings {
     fn new() -> Self {
         Self {
-            #[cfg(any(
-                feature = "color-scheme",
-                feature = "accent-color",
-                feature = "reduced-motion",
-                feature = "reduced-transparency"
-            ))]
+            #[cfg(feature = "_windows-ui-settings")]
             ui: UISettings::new().ok(),
             #[cfg(feature = "contrast")]
             accessibility: AccessibilitySettings::new().ok(),
@@ -248,6 +235,13 @@ fn read_preferences(
         preferences.double_click_interval = read_double_click_time();
     }
 
+    #[cfg(feature = "scrollbar-visibility")]
+    if let Some(ui) = &settings.ui {
+        if interest.is(Interest::ScrollbarVisibility) {
+            preferences.scrollbar_visibility = read_auto_hide_scroll_bars(ui);
+        }
+    }
+
     preferences
 }
 
@@ -323,6 +317,16 @@ fn read_reduced_transparency(settings: &UISettings) -> ReducedTransparency {
         ReducedTransparency::NoPreference
     } else {
         ReducedTransparency::Reduce
+    }
+}
+
+#[cfg(feature = "scrollbar-visibility")]
+fn read_auto_hide_scroll_bars(settings: &UISettings) -> ScrollbarVisibility {
+    let auto_hide_scroll_bars = try_settings_result!(settings.AutoHideScrollBars());
+    if auto_hide_scroll_bars {
+        ScrollbarVisibility::Auto
+    } else {
+        ScrollbarVisibility::Always
     }
 }
 

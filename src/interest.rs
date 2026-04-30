@@ -64,6 +64,11 @@ impl_interest! {
         /// Retrieve the [`DoubleClickInterval`](`crate::DoubleClickInterval`) preference
         /// and store it in [`Preferences::double_click_interval`](`crate::Preferences::double_click_interval`).
         pub const DoubleClickInterval: Interest = Interest(1 << 5);
+
+        #[cfg(feature = "scrollbar-visibility")]
+        /// Retrieve the [`ScrollbarVisibility`](`crate::ScrollbarVisibility`) preference
+        /// and store it in [`Preferences::scrollbar_visibility`](`crate::Preferences::scrollbar_visibility`).
+        pub const ScrollbarVisibility: Interest = Interest(1 << 6);
     }
 }
 
@@ -102,6 +107,10 @@ impl Interest {
         #[cfg(feature = "double-click-interval")]
         {
             value |= Interest::DoubleClickInterval.0;
+        }
+        #[cfg(feature = "scrollbar-visibility")]
+        {
+            value |= Interest::ScrollbarVisibility.0;
         }
         Interest(value)
     };

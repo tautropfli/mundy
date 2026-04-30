@@ -18,6 +18,7 @@
 //! * [`ReducedMotion`]—The user's reduced motion preference.
 //! * [`ReducedTransparency`]—The user's reduced transparency preference.
 //! * [`DoubleClickInterval`]—The maximum amount of time allowed between the first and second click.
+//! * [`ScrollbarVisibility`]—Whether the scrollbar should be always visible or auto-hide.
 //!
 //! Note that each preference has a corresponding [feature flag](`feature_flags`).
 //! By turning off [default features](https://doc.rust-lang.org/cargo/reference/features.html#the-default-feature)
@@ -156,6 +157,7 @@ pub mod platform {
 /// * `reduced-transparency`—Enable support for [`ReducedTransparency`] (*default*).
 /// * `accent-color`—Enable support for [`AccentColor`] (*default*).
 /// * `double-click-interval`—Enable support for [`DoubleClickInterval`] (*default*).
+/// * `scrollbar-visibility`—Enable support for [`ScrollbarVisibility`] (*default*).
 /// * (Linux) `async-io`—Use `zbus` with `async-io` (*default*).
 /// * (Linux) `tokio`—Use `zbus` with `tokio` instead of `async-io`.
 ///
@@ -198,6 +200,9 @@ pub struct Preferences {
     /// event for it to count as double click.
     #[cfg(feature = "double-click-interval")]
     pub double_click_interval: DoubleClickInterval,
+    /// Whether the scrollbar should be always visible or auto-hide (overlay).
+    #[cfg(feature = "scrollbar-visibility")]
+    pub scrollbar_visibility: ScrollbarVisibility,
 }
 
 impl Preferences {
@@ -280,6 +285,7 @@ impls! {
         "reduced-motion" reduced_motion,
         "accent-color" accent_color,
         "double-click-interval" double_click_interval,
+        "scrollbar-visibility" scrollbar_visibility,
     };
 
     #[cfg(windows)]
@@ -290,6 +296,7 @@ impls! {
         "accent-color" accent_color,
         "reduced-transparency" reduced_transparency,
         "double-click-interval" double_click_interval,
+        "scrollbar-visibility" scrollbar_visibility,
     };
 
     #[cfg(target_os = "macos")]
@@ -300,6 +307,7 @@ impls! {
         "reduced-transparency" reduced_transparency,
         "accent-color" accent_color,
         "double-click-interval" double_click_interval,
+        "scrollbar-visibility" scrollbar_visibility,
     };
 
     #[cfg(all(target_family = "wasm", target_os = "unknown"))]
@@ -489,7 +497,6 @@ impl ReducedMotion {
 ///
 /// </details>
 ///
-/// [xdg]: https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.impl.portal.Settings.html
 /// [`prefers-reduced-transparency`]: https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-transparency
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg(feature = "reduced-transparency")]
@@ -512,6 +519,55 @@ impl ReducedTransparency {
 
     pub fn is_reduce(self) -> bool {
         matches!(self, ReducedTransparency::Reduce)
+    }
+}
+
+/// Whether the scrollbar should be always visible or auto-hide (overlay). \
+/// This preference may change depending on which input devices are connected.
+///
+/// <details>
+/// <summary style="cursor: pointer">
+///
+/// #### Platform-specific Sources
+///
+/// </summary>
+///
+/// * Linux (GNOME-only): `org.gnome.desktop.interface overlay-scrolling` from the [XDG Settings portal][xdg].
+/// * Windows: [`UISettings.AutoHideScrollBars`](https://learn.microsoft.com/en-us/uwp/api/windows.ui.viewmanagement.uisettings.autohidescrollbars)
+/// * macOS: [`NSScroller.preferredScrollerStyle`](https://developer.apple.com/documentation/appkit/nsscroller/preferredscrollerstyle)
+/// * Web: Unsupported
+/// * Android: Unsupported
+///
+/// </details>
+///
+/// [xdg]: https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.impl.portal.Settings.html
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "scrollbar-visibility")]
+pub enum ScrollbarVisibility {
+    /// Indicates that the user has not expressed an active preference,
+    /// that the current platform doesn't support a scrollbar visibility preference
+    /// or that an error occurred while trying to retrieve the preference.
+    #[default]
+    NoPreference,
+    /// Automatically show the scrollbars while the user is scrolling
+    /// and hide them otherwise. This is also known as «overlay scrolling».
+    Auto,
+    /// Always show the scrollbars.
+    Always,
+}
+
+#[cfg(feature = "scrollbar-visibility")]
+impl ScrollbarVisibility {
+    pub fn is_no_preference(self) -> bool {
+        matches!(self, ScrollbarVisibility::NoPreference)
+    }
+
+    pub fn is_auto(self) -> bool {
+        matches!(self, ScrollbarVisibility::Auto)
+    }
+
+    pub fn is_always(self) -> bool {
+        matches!(self, ScrollbarVisibility::Always)
     }
 }
 

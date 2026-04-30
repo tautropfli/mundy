@@ -6,6 +6,8 @@ use super::get_contrast;
 use super::get_reduced_motion;
 #[cfg(feature = "reduced-transparency")]
 use super::get_reduced_transparency;
+#[cfg(feature = "scrollbar-visibility")]
+use super::get_scrollbar_visibility;
 #[cfg(feature = "color-scheme")]
 use super::main_thread::run_on_main_async;
 #[cfg(feature = "_macos-accessibility")]
@@ -24,6 +26,8 @@ use objc2::{define_class, msg_send, AllocAnyThread as _, DeclaredClass};
 #[cfg(feature = "color-scheme")]
 use objc2_app_kit::NSAppearance;
 use objc2_app_kit::NSApplication;
+#[cfg(feature = "scrollbar-visibility")]
+use objc2_app_kit::NSPreferredScrollerStyleDidChangeNotification;
 #[cfg(feature = "accent-color")]
 use objc2_app_kit::NSSystemColorsDidChangeNotification;
 #[cfg(feature = "_macos-accessibility")]
@@ -108,6 +112,20 @@ impl Observer {
             }
         }
 
+        #[cfg(feature = "scrollbar-visibility")]
+        if interest.is(Interest::ScrollbarVisibility) {
+            // SAFETY: The observer is removed on drop.
+            unsafe {
+                let notification_center = NSNotificationCenter::defaultCenter();
+                notification_center.addObserver_selector_name_object(
+                    &observer,
+                    sel!(scrollerStyleDidChange),
+                    Some(NSPreferredScrollerStyleDidChangeNotification),
+                    None,
+                );
+            }
+        }
+
         ObserverRegistration { observer, interest }
     }
 
@@ -149,6 +167,14 @@ impl Drop for ObserverRegistration {
                 notification_center.removeObserver(&self.observer);
             }
         }
+
+        #[cfg(feature = "scrollbar-visibility")]
+        if self.interest.is(Interest::ScrollbarVisibility) {
+            unsafe {
+                let notification_center = NSNotificationCenter::defaultCenter();
+                notification_center.removeObserver(&self.observer);
+            }
+        }
     }
 }
 
@@ -166,6 +192,15 @@ define_class! {
         #[unsafe(method(systemColorsDidChange))]
         fn system_colors_did_change(&self) {
             _ = self.ivars().sender.unbounded_send(Preference::AccentColor(get_accent_color()));
+        }
+
+        #[cfg(feature = "scrollbar-visibility")]
+        #[unsafe(method(scrollerStyleDidChange))]
+        fn scroller_style_did_change(&self) {
+            let sender = self.ivars().sender.clone();
+            run_on_main_async(move |mtm| {
+                _ = sender.unbounded_send(Preference::ScrollbarVisibility(get_scrollbar_visibility(mtm)));
+            });
         }
 
         #[cfg(feature = "_macos-accessibility")]
