@@ -24,7 +24,9 @@ use std::thread;
 use std::time::Duration;
 #[cfg(feature = "double-click-interval")]
 use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
-use windows::Win32::UI::WindowsAndMessaging::WM_SETTINGCHANGE;
+use windows::Win32::UI::WindowsAndMessaging::{
+    WM_SETTINGCHANGE, WM_SYSCOLORCHANGE, WM_THEMECHANGED,
+};
 #[cfg(any(feature = "color-scheme", feature = "accent-color"))]
 use windows::UI::Color;
 #[cfg(feature = "contrast")]
@@ -166,7 +168,10 @@ impl Settings {
 
 fn register_wm_settingchange_hook(tx: std_mpsc::Sender<Message>) -> Option<WindowsHookGuard> {
     let result = register_windows_hook(Box::new(move |data| {
-        if data.message == WM_SETTINGCHANGE {
+        if data.message == WM_SETTINGCHANGE
+            || data.message == WM_SYSCOLORCHANGE
+            || data.message == WM_THEMECHANGED
+        {
             _ = tx.send(Message::WM_SETTINGCHANGE);
         }
     }));
