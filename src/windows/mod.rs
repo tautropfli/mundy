@@ -22,6 +22,8 @@ use std::any::Any;
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
+#[cfg(feature = "scrollbar-visibility")]
+use windows::Foundation::TypedEventHandler;
 #[cfg(feature = "double-click-interval")]
 use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -128,15 +130,30 @@ fn stream_in_com_thread(
     interest: Interest,
 ) {
     let settings = Settings::new();
+
+    #[cfg(feature = "scrollbar-visibility")]
+    let _auto_hide_scroll_bars_changed_subscription = if interest.is(Interest::ScrollbarVisibility)
+    {
+        settings
+            .ui
+            .as_ref()
+            .map(|ui| subscribe_auto_hide_scroll_bars_changed(msg_tx.clone(), ui))
+    } else {
+        None
+    };
+    let _hook = register_wm_settingchange_hook(msg_tx);
+
     let preferences = read_preferences(&settings, interest);
     _ = sender.unbounded_send(preferences);
-
-    let _hook = register_wm_settingchange_hook(msg_tx);
 
     while let Ok(message) = msg_rx.recv() {
         match message {
             Message::Shutdown => break,
             Message::WM_SETTINGCHANGE => {
+                _ = sender.unbounded_send(read_preferences(&settings, interest));
+            }
+            #[cfg(feature = "scrollbar-visibility")]
+            Message::AutoHideScrollbarChanged => {
                 _ = sender.unbounded_send(read_preferences(&settings, interest));
             }
         }
@@ -192,6 +209,8 @@ enum Message {
     Shutdown,
     #[allow(non_camel_case_types)]
     WM_SETTINGCHANGE,
+    #[cfg(feature = "scrollbar-visibility")]
+    AutoHideScrollbarChanged,
 }
 
 fn read_preferences(
@@ -325,6 +344,12 @@ fn read_reduced_transparency(settings: &UISettings) -> ReducedTransparency {
     }
 }
 
+#[cfg(feature = "double-click-interval")]
+fn read_double_click_time() -> DoubleClickInterval {
+    let millis = unsafe { GetDoubleClickTime() };
+    DoubleClickInterval(Some(Duration::from_millis(millis as u64)))
+}
+
 #[cfg(feature = "scrollbar-visibility")]
 fn read_auto_hide_scroll_bars(settings: &UISettings) -> ScrollbarVisibility {
     let auto_hide_scroll_bars = try_settings_result!(settings.AutoHideScrollBars());
@@ -335,8 +360,39 @@ fn read_auto_hide_scroll_bars(settings: &UISettings) -> ScrollbarVisibility {
     }
 }
 
-#[cfg(feature = "double-click-interval")]
-fn read_double_click_time() -> DoubleClickInterval {
-    let millis = unsafe { GetDoubleClickTime() };
-    DoubleClickInterval(Some(Duration::from_millis(millis as u64)))
+#[cfg(feature = "scrollbar-visibility")]
+fn subscribe_auto_hide_scroll_bars_changed(
+    msg_tx: std_mpsc::Sender<Message>,
+    ui_settings: &UISettings,
+) -> AutoHideScrollbarsChangedSubscriptionGuard {
+    let token =
+        ui_settings.AutoHideScrollBarsChanged(&TypedEventHandler::new(move |_sender, _args| {
+            _ = msg_tx.send(Message::AutoHideScrollbarChanged);
+            Ok(())
+        }));
+
+    #[cfg(feature = "log")]
+    if let Err(error) = &token {
+        log::warn!("failed to register 'AutoHideScrollBarsChanged' event handler: {error}")
+    }
+
+    AutoHideScrollbarsChangedSubscriptionGuard {
+        ui_settings: ui_settings.clone(),
+        token: token.ok(),
+    }
+}
+
+#[cfg(feature = "scrollbar-visibility")]
+struct AutoHideScrollbarsChangedSubscriptionGuard {
+    ui_settings: UISettings,
+    token: Option<i64>,
+}
+
+#[cfg(feature = "scrollbar-visibility")]
+impl Drop for AutoHideScrollbarsChangedSubscriptionGuard {
+    fn drop(&mut self) {
+        if let Some(token) = self.token {
+            _ = self.ui_settings.RemoveAutoHideScrollBarsChanged(token);
+        }
+    }
 }
