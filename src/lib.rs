@@ -100,11 +100,18 @@ pub mod platform {
     /// If you want to listen to changes to the [`ColorScheme`], then you will also need
     /// to call the [`crate::platform::android::on_configuration_changed`] function as needed.
     ///
+    /// ## Building
+    /// To build for Android, mundy requires:
+    /// * A Java compiler: You can either have `javac` in your `PATH` or the `JAVA_HOME` environment variable set.
+    /// * The `android.jar` file from the Android SDK, see [`android_jar`] for which
+    ///   environment variables are used when searching for that file.
+    ///
     /// [`Context`]: https://developer.android.com/reference/android/content/Context
     /// [`ndk-context`]: https://docs.rs/ndk-context
     /// [`android-activity`]: https://docs.rs/android-activity
     /// [`winit`]: https://docs.rs/winit
     /// [`ColorScheme`]: `crate::ColorScheme`
+    /// [`android_jar`]: https://docs.rs/android-build/latest/android_build/fn.android_jar.html
     #[cfg(any(doc, target_os = "android"))]
     #[cfg_attr(docsrs, doc(cfg(target_os = "android")))]
     pub mod android {
