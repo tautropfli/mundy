@@ -20,3 +20,8 @@ pub(crate) use dedup::*;
 mod either;
 #[cfg(target_os = "linux")]
 pub(crate) use either::*;
+
+#[cfg(any(target_os = "linux", test))]
+mod merge;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) use merge::*;

@@ -49,6 +49,9 @@ fn log_message_error(err: &zbus::Error) {
 #[cfg(not(feature = "log"))]
 fn log_message_error(_err: &zbus::Error) {}
 
+const PORTAL: &str = "org.freedesktop.portal.Desktop";
+const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
+#[cfg(feature = "_settings-portal")]
 const APPEARANCE: &str = "org.freedesktop.appearance";
 #[cfg(any(feature = "reduced-motion", feature = "accent-color", feature = "scrollbar-visibility"))]
 const GNOME_INTERFACE: &str = "org.gnome.desktop.interface";
@@ -100,24 +103,43 @@ cfg_if! {
 }
 
 fn preferences_stream(interest: Interest) -> impl Stream<Item = AvailablePreferences> {
-    stream::once_future(subscribe(interest)).flat_map(move |(state, preferences, stream)| {
+    stream::once_future(subscribe(interest)).flat_map(move |subscription| {
+        let Subscription {
+            state,
+            preferences,
+            #[cfg(feature = "_settings-portal")]
+            setting_changed,
+        } = subscription;
         let initial_value = stream::once(preferences);
-        let stream = stream.map(Left).unwrap_or_else(|| Right(stream::empty()));
-        initial_value.chain(changes(interest, state, preferences, stream))
+        #[cfg(feature = "_settings-portal")]
+        let signals = optional_stream(setting_changed).map(Signal::SettingChanged);
+        #[cfg(not(feature = "_settings-portal"))]
+        let signals = stream::empty();
+        initial_value.chain(changes(interest, state, preferences, signals))
     })
+}
+
+fn optional_stream(stream: Option<SignalStream<'static>>) -> impl Stream<Item = Message> {
+    stream.map(Left).unwrap_or_else(|| Right(stream::empty()))
 }
 
 fn changes(
     interest: Interest,
     state: State,
     preferences: AvailablePreferences,
-    stream: impl Stream<Item = Message>,
+    stream: impl Stream<Item = Signal>,
 ) -> impl Stream<Item = AvailablePreferences> {
     Scan::new(
         stream,
         (state, preferences),
-        move |(mut state, mut preferences), message| async move {
-            if let Err(err) = apply_message(interest, &mut state, &mut preferences, message).await {
+        move |(mut state, mut preferences), signal| async move {
+            let result = match signal {
+                #[cfg(feature = "_settings-portal")]
+                Signal::SettingChanged(message) => {
+                    apply_message(interest, &mut state, &mut preferences, message).await
+                }
+            };
+            if let Err(err) = result {
                 log_message_error(&err);
             }
             Some(((state, preferences), preferences))
@@ -125,33 +147,48 @@ fn changes(
     )
 }
 
-async fn subscribe(
-    interest: Interest,
-) -> (State, AvailablePreferences, Option<SignalStream<'static>>) {
-    match connect().await {
+/// A signal from one of the portals that mundy subscribes to.
+enum Signal {
+    /// `SettingChanged` from the Settings portal.
+    #[cfg(feature = "_settings-portal")]
+    SettingChanged(Message),
+}
+
+#[derive(Default)]
+struct Subscription {
+    state: State,
+    preferences: AvailablePreferences,
+    #[cfg(feature = "_settings-portal")]
+    setting_changed: Option<SignalStream<'static>>,
+}
+
+async fn subscribe(interest: Interest) -> Subscription {
+    let connection = match Connection::session().await {
+        Ok(connection) => connection,
+        Err(err) => {
+            log_dbus_connection_error(&err);
+            return Subscription::default();
+        }
+    };
+    let mut subscription = Subscription::default();
+    #[cfg(feature = "_settings-portal")]
+    match settings_proxy(&connection).await {
         Ok(proxy) => {
-            let stream = setting_changed(&proxy, interest)
+            subscription.setting_changed = setting_changed(&proxy, interest)
                 .await
                 .inspect_err(log_dbus_connection_error)
                 .ok();
-            let (state, preferences) = initial_preferences(&proxy, interest)
+            (subscription.state, subscription.preferences) = initial_preferences(&proxy, interest)
                 .await
                 .inspect_err(log_initial_settings_retrieval_error)
                 .unwrap_or_default();
-            (state, preferences, stream)
         }
-        Err(err) => {
-            log_dbus_connection_error(&err);
-            Default::default()
-        }
+        Err(err) => log_dbus_connection_error(&err),
     }
+    subscription
 }
 
-async fn connect() -> zbus::Result<Proxy<'static>> {
-    let connection = Connection::session().await?;
-    settings_proxy(&connection).await
-}
-
+#[cfg(feature = "_settings-portal")]
 async fn apply_message(
     interest: Interest,
     _state: &mut State,
@@ -204,6 +241,7 @@ async fn apply_message(
     Ok(())
 }
 
+#[cfg(feature = "_settings-portal")]
 async fn initial_preferences(
     proxy: &Proxy<'_>,
     interest: Interest,
@@ -269,16 +307,18 @@ async fn initial_preferences(
     Ok((_state, preferences))
 }
 
+#[cfg(feature = "_settings-portal")]
 async fn settings_proxy<'a>(connection: &Connection) -> zbus::Result<Proxy<'a>> {
     Proxy::new(
         connection,
-        "org.freedesktop.portal.Desktop",
-        "/org/freedesktop/portal/desktop",
+        PORTAL,
+        PORTAL_PATH,
         "org.freedesktop.portal.Settings",
     )
     .await
 }
 
+#[cfg(feature = "_settings-portal")]
 async fn read_setting(proxy: &Proxy<'_>, namespace: &str, key: &str) -> Option<Value<'static>> {
     proxy
         .call::<_, _, OwnedValue>("Read", &(namespace, key))
@@ -291,6 +331,7 @@ async fn read_setting(proxy: &Proxy<'_>, namespace: &str, key: &str) -> Option<V
 // `Read` returns a variant inside a variant *sigh*.
 // In theory there's `ReadOne` which fixes this but I
 // haven't checked how ubiquitously it is available.
+#[cfg(feature = "_settings-portal")]
 fn flatten_value(value: Value<'_>) -> Value<'_> {
     if let Value::Value(inner) = value {
         *inner
@@ -299,6 +340,7 @@ fn flatten_value(value: Value<'_>) -> Value<'_> {
     }
 }
 
+#[cfg(feature = "_settings-portal")]
 async fn setting_changed(
     proxy: &Proxy<'_>,
     interest: Interest,
@@ -308,6 +350,7 @@ async fn setting_changed(
         .await
 }
 
+#[cfg(feature = "_settings-portal")]
 fn signal_filter(
     #[cfg_attr(
         not(any(feature = "_gnome_only", feature = "accent-color")),
