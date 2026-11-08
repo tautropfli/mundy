@@ -18,10 +18,17 @@ use futures_channel::mpsc;
 use futures_lite::{stream, Stream, StreamExt as _};
 use hook::{register_windows_hook, WindowsHookGuard};
 use pin_project_lite::pin_project;
+#[cfg(feature = "power-saver")]
+use power_setting::{
+    register_power_setting_notifications, PowerSaverStatus, PowerSettingChange,
+    PowerSettingsGuard,
+};
 use std::any::Any;
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
+#[cfg(feature = "power-saver")]
+use std::time::Instant;
 #[cfg(feature = "scrollbar-visibility")]
 use windows::Foundation::TypedEventHandler;
 #[cfg(feature = "double-click-interval")]
@@ -40,6 +47,8 @@ use windows::UI::ViewManagement::UISettings;
 
 mod hook;
 mod main_thread;
+#[cfg(feature = "power-saver")]
+mod power_setting;
 
 pin_project! {
     pub(crate) struct PreferencesStream {
@@ -88,22 +97,17 @@ pub(crate) fn default_stream() -> PreferencesStream {
     }
 }
 
-pub(crate) fn once_blocking(
-    interest: Interest,
-    _timeout: Duration,
-) -> Option<AvailablePreferences> {
-    Some(
-        thread::Builder::new()
-            .name(format!(
-                "{} COM thread (once_blocking)",
-                env!("CARGO_PKG_NAME")
-            ))
-            .spawn(move || once_blocking_in_com_thread(interest))
-            .expect("failed to spawn thread")
-            .join()
-            .inspect_err(log_thread_join_err)
-            .unwrap_or_default(),
-    )
+pub(crate) fn once_blocking(interest: Interest, timeout: Duration) -> Option<AvailablePreferences> {
+    thread::Builder::new()
+        .name(format!(
+            "{} COM thread (once_blocking)",
+            env!("CARGO_PKG_NAME")
+        ))
+        .spawn(move || once_blocking_in_com_thread(interest, timeout))
+        .expect("failed to spawn thread")
+        .join()
+        .inspect_err(log_thread_join_err)
+        .unwrap_or_else(|_| Some(AvailablePreferences::default()))
 }
 
 cfg_if! {
@@ -129,7 +133,8 @@ fn stream_in_com_thread(
     msg_rx: std_mpsc::Receiver<Message>,
     interest: Interest,
 ) {
-    let settings = Settings::new();
+    #[cfg_attr(not(feature = "power-saver"), expect(unused_mut))]
+    let mut settings = Settings::new();
 
     #[cfg(feature = "scrollbar-visibility")]
     let _auto_hide_scroll_bars_changed_subscription = if interest.is(Interest::ScrollbarVisibility)
@@ -141,7 +146,22 @@ fn stream_in_com_thread(
     } else {
         None
     };
+    #[cfg(feature = "power-saver")]
+    let power_settings = if interest.is(Interest::PowerSaver) {
+        register_power_settings(msg_tx.clone())
+    } else {
+        None
+    };
     let _hook = register_wm_settingchange_hook(msg_tx);
+
+    #[cfg(feature = "power-saver")]
+    if let Some(power_settings) = &power_settings {
+        // No deadline: Windows documents that it reports the current value of a setting
+        // right after the registration.
+        if !wait_for_power_settings(&msg_rx, power_settings, &mut settings.power_saver, None) {
+            return;
+        }
+    }
 
     let preferences = read_preferences(&settings, interest);
     _ = sender.unbounded_send(preferences);
@@ -156,13 +176,36 @@ fn stream_in_com_thread(
             Message::AutoHideScrollbarChanged => {
                 _ = sender.unbounded_send(read_preferences(&settings, interest));
             }
+            #[cfg(feature = "power-saver")]
+            Message::PowerSettingChanged(change) => {
+                settings.power_saver.apply(change);
+                _ = sender.unbounded_send(read_preferences(&settings, interest));
+            }
         }
     }
 }
 
-fn once_blocking_in_com_thread(interest: Interest) -> AvailablePreferences {
-    let settings = Settings::new();
-    read_preferences(&settings, interest)
+fn once_blocking_in_com_thread(
+    interest: Interest,
+    #[cfg_attr(not(feature = "power-saver"), expect(unused_variables))] timeout: Duration,
+) -> Option<AvailablePreferences> {
+    #[cfg_attr(not(feature = "power-saver"), expect(unused_mut))]
+    let mut settings = Settings::new();
+
+    #[cfg(feature = "power-saver")]
+    if interest.is(Interest::PowerSaver) {
+        let (msg_tx, msg_rx) = std_mpsc::channel();
+        if let Some(power_settings) = register_power_settings(msg_tx) {
+            // No deadline if the timeout is too large to add to `Instant`.
+            let deadline = Instant::now().checked_add(timeout);
+            if !wait_for_power_settings(&msg_rx, &power_settings, &mut settings.power_saver, deadline)
+            {
+                return None;
+            }
+        }
+    }
+
+    Some(read_preferences(&settings, interest))
 }
 
 struct Settings {
@@ -170,6 +213,8 @@ struct Settings {
     ui: Option<UISettings>,
     #[cfg(feature = "contrast")]
     accessibility: Option<AccessibilitySettings>,
+    #[cfg(feature = "power-saver")]
+    power_saver: PowerSaverStatus,
 }
 
 impl Settings {
@@ -179,8 +224,53 @@ impl Settings {
             ui: UISettings::new().ok(),
             #[cfg(feature = "contrast")]
             accessibility: AccessibilitySettings::new().ok(),
+            #[cfg(feature = "power-saver")]
+            power_saver: PowerSaverStatus::default(),
         }
     }
+}
+
+#[cfg(feature = "power-saver")]
+fn register_power_settings(msg_tx: std_mpsc::Sender<Message>) -> Option<PowerSettingsGuard> {
+    let result = register_power_setting_notifications(Box::new(move |change| {
+        _ = msg_tx.send(Message::PowerSettingChanged(change));
+    }));
+    match result {
+        Ok(guard) => Some(guard),
+        #[cfg(feature = "log")]
+        Err(error) => {
+            log::warn!("failed to register for power setting notifications: {error:?}");
+            None
+        }
+        #[cfg(not(feature = "log"))]
+        Err(_) => None,
+    }
+}
+
+/// Waits until the power settings reported their initial values
+/// and returns `false` if the stream is shut down or the deadline passes first.
+/// Other messages are dropped, as the preferences are read after the wait.
+#[cfg(feature = "power-saver")]
+fn wait_for_power_settings(
+    msg_rx: &std_mpsc::Receiver<Message>,
+    power_settings: &PowerSettingsGuard,
+    status: &mut PowerSaverStatus,
+    deadline: Option<Instant>,
+) -> bool {
+    while !power_settings.has_initial_values(status) {
+        let message = match deadline {
+            Some(deadline) => msg_rx
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .ok(),
+            None => msg_rx.recv().ok(),
+        };
+        match message {
+            Some(Message::PowerSettingChanged(change)) => status.apply(change),
+            Some(Message::Shutdown) | None => return false,
+            Some(_) => {}
+        }
+    }
+    true
 }
 
 fn register_wm_settingchange_hook(tx: std_mpsc::Sender<Message>) -> Option<WindowsHookGuard> {
@@ -211,6 +301,8 @@ enum Message {
     WM_SETTINGCHANGE,
     #[cfg(feature = "scrollbar-visibility")]
     AutoHideScrollbarChanged,
+    #[cfg(feature = "power-saver")]
+    PowerSettingChanged(PowerSettingChange),
 }
 
 fn read_preferences(
@@ -264,6 +356,11 @@ fn read_preferences(
         if interest.is(Interest::ScrollbarVisibility) {
             preferences.scrollbar_visibility = read_auto_hide_scroll_bars(ui);
         }
+    }
+
+    #[cfg(feature = "power-saver")]
+    if interest.is(Interest::PowerSaver) {
+        preferences.power_saver = settings.power_saver.preference();
     }
 
     preferences

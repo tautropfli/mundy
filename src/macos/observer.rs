@@ -2,6 +2,8 @@
 use super::get_accent_color;
 #[cfg(feature = "contrast")]
 use super::get_contrast;
+#[cfg(feature = "power-saver")]
+use super::get_power_saver;
 #[cfg(feature = "reduced-motion")]
 use super::get_reduced_motion;
 #[cfg(feature = "reduced-transparency")]
@@ -20,7 +22,11 @@ use futures_channel::mpsc;
 use objc2::rc::Retained;
 #[cfg(feature = "color-scheme")]
 use objc2::runtime::AnyObject;
-#[cfg(any(feature = "accent-color", feature = "_macos-accessibility"))]
+#[cfg(any(
+    feature = "accent-color",
+    feature = "_macos-accessibility",
+    feature = "power-saver"
+))]
 use objc2::sel;
 use objc2::{define_class, msg_send, AllocAnyThread as _, DeclaredClass};
 #[cfg(feature = "color-scheme")]
@@ -34,12 +40,16 @@ use objc2_app_kit::NSSystemColorsDidChangeNotification;
 use objc2_app_kit::NSWorkspace;
 #[cfg(feature = "_macos-accessibility")]
 use objc2_app_kit::NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification;
-#[cfg(feature = "accent-color")]
+#[cfg(any(feature = "accent-color", feature = "power-saver"))]
 use objc2_foundation::NSNotificationCenter;
 use objc2_foundation::NSObject;
+#[cfg(any(feature = "color-scheme", feature = "power-saver"))]
+use objc2_foundation::ns_string;
+#[cfg(feature = "power-saver")]
+use objc2_foundation::NSNotificationName;
 #[cfg(feature = "color-scheme")]
 use objc2_foundation::{
-    ns_string, NSDictionary, NSKeyValueChangeKey, NSKeyValueChangeNewKey,
+    NSDictionary, NSKeyValueChangeKey, NSKeyValueChangeNewKey,
     NSKeyValueObservingOptions, NSObjectNSKeyValueObserverRegistration as _, NSString,
 };
 #[cfg(feature = "color-scheme")]
@@ -55,6 +65,13 @@ pub(crate) struct ObserverRegistration {
 #[cfg(feature = "color-scheme")]
 fn effective_appearance_key() -> &'static NSString {
     ns_string!("effectiveAppearance")
+}
+
+/// The value of `NSProcessInfoPowerStateDidChangeNotification`, which is spelled out
+/// because the constant was added in macOS 12: linking to it would fail on earlier versions.
+#[cfg(feature = "power-saver")]
+fn power_state_did_change_notification() -> &'static NSNotificationName {
+    ns_string!("NSProcessInfoPowerStateDidChangeNotification")
 }
 
 impl Observer {
@@ -126,6 +143,20 @@ impl Observer {
             }
         }
 
+        #[cfg(feature = "power-saver")]
+        if interest.is(Interest::PowerSaver) {
+            // SAFETY: The observer is removed on drop.
+            unsafe {
+                let notification_center = NSNotificationCenter::defaultCenter();
+                notification_center.addObserver_selector_name_object(
+                    &observer,
+                    sel!(powerStateDidChange),
+                    Some(power_state_did_change_notification()),
+                    None,
+                );
+            }
+        }
+
         ObserverRegistration { observer, interest }
     }
 
@@ -175,6 +206,14 @@ impl Drop for ObserverRegistration {
                 notification_center.removeObserver(&self.observer);
             }
         }
+
+        #[cfg(feature = "power-saver")]
+        if self.interest.is(Interest::PowerSaver) {
+            unsafe {
+                let notification_center = NSNotificationCenter::defaultCenter();
+                notification_center.removeObserver(&self.observer);
+            }
+        }
     }
 }
 
@@ -201,6 +240,13 @@ define_class! {
             run_on_main_async(move |mtm| {
                 _ = sender.unbounded_send(Preference::ScrollbarVisibility(get_scrollbar_visibility(mtm)));
             });
+        }
+
+        // Called on the thread that posted the notification, which Apple leaves unspecified.
+        #[cfg(feature = "power-saver")]
+        #[unsafe(method(powerStateDidChange))]
+        fn power_state_did_change(&self) {
+            _ = self.ivars().sender.unbounded_send(Preference::PowerSaver(get_power_saver()));
         }
 
         #[cfg(feature = "_macos-accessibility")]

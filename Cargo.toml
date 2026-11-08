@@ -63,16 +63,23 @@ tokio = ["zbus/tokio", "dep:tokio"]
 callback = ["dep:beul", "dep:futures-channel"]
 color-scheme = [
     "_macos-observable",
+    "_settings-portal",
     "_windows-ui-settings",
     "dep:dispatch",
     "objc2-app-kit/NSAppearance",
     "objc2-foundation/NSKeyValueObserving",
 ]
-contrast = ["_macos-accessibility", "_winrt"]
-reduced-motion = ["_macos-accessibility", "_gnome_only", "_windows-ui-settings"]
+contrast = ["_macos-accessibility", "_settings-portal", "_winrt"]
+reduced-motion = [
+    "_macos-accessibility",
+    "_gnome_only",
+    "_settings-portal",
+    "_windows-ui-settings",
+]
 reduced-transparency = ["_macos-accessibility", "_windows-ui-settings"]
 accent-color = [
     "_macos-observable",
+    "_settings-portal",
     "_windows-ui-settings",
     "web-sys/Comment",
     "web-sys/CssStyleDeclaration",
@@ -87,10 +94,18 @@ accent-color = [
 ]
 double-click-interval = [
     "_gnome_only",
+    "_settings-portal",
     "objc2-app-kit/NSEvent",
     "windows/Win32_UI_Input_KeyboardAndMouse",
 ]
-scrollbar-visibility = ["_gnome_only", "_windows-ui-settings"]
+scrollbar-visibility = ["_gnome_only", "_settings-portal", "_windows-ui-settings"]
+power-saver = [
+    "_macos-observable",
+    "objc2-foundation/NSNotification",
+    "objc2-foundation/NSProcessInfo",
+    "windows/Win32_System_Power",
+    "windows/Win32_System_SystemServices",
+]
 _all-preferences = [
     "color-scheme",
     "contrast",
@@ -99,6 +114,7 @@ _all-preferences = [
     "scrollbar-visibility",
     "accent-color",
     "double-click-interval",
+    "power-saver",
 ]
 _macos-accessibility = [
     "_macos-observable",
@@ -107,6 +123,7 @@ _macos-accessibility = [
 ]
 _macos-observable = ["dep:futures-channel"]
 _gnome_only = []
+_settings-portal = []
 _winrt = ["windows/UI_ViewManagement", "windows/Win32_System_WinRT"]
 _windows-ui-settings = ["_winrt"]
 

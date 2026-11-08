@@ -58,6 +58,8 @@
 use crate::ColorScheme;
 #[cfg(feature = "contrast")]
 use crate::Contrast;
+#[cfg(feature = "power-saver")]
+use crate::PowerSaver;
 #[cfg(feature = "reduced-motion")]
 use crate::ReducedMotion;
 #[cfg(feature = "accent-color")]
@@ -168,6 +170,11 @@ fn try_get_preferences(interest: Interest) -> Result<AvailablePreferences> {
             preferences.accent_color = get_accent_color(&support, env).unwrap_or_default();
         }
 
+        #[cfg(feature = "power-saver")]
+        if interest.is(Interest::PowerSaver) {
+            preferences.power_saver = get_power_saver(&support, env).unwrap_or_default();
+        }
+
         Ok(preferences)
     })
 }
@@ -211,4 +218,13 @@ fn get_accent_color(support: &MundySupport, env: &mut Env) -> Result<AccentColor
     let blue = (color & 0xff) as u8;
     let color = Srgba::from_u8_array([red, green, blue, alpha]);
     Ok(AccentColor(Some(color)))
+}
+
+#[cfg(feature = "power-saver")]
+fn get_power_saver(support: &MundySupport, env: &mut Env) -> Result<PowerSaver> {
+    if support.get_power_save_mode(env)? {
+        Ok(PowerSaver::Enabled)
+    } else {
+        Ok(PowerSaver::NoPreference)
+    }
 }

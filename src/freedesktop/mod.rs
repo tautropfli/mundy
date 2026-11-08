@@ -4,6 +4,8 @@ use crate::ColorScheme;
 use crate::Contrast;
 #[cfg(feature = "double-click-interval")]
 use crate::DoubleClickInterval;
+#[cfg(feature = "power-saver")]
+use crate::PowerSaver;
 #[cfg(feature = "reduced-motion")]
 use crate::ReducedMotion;
 #[cfg(feature = "scrollbar-visibility")]
@@ -12,13 +14,19 @@ use crate::ScrollbarVisibility;
 use crate::{AccentColor, Srgba};
 
 use crate::async_rt::block_on;
+#[cfg(feature = "power-saver")]
+use crate::stream_utils::Merge;
 use crate::stream_utils::{Left, Right, Scan};
 use crate::{AvailablePreferences, Interest};
 use cfg_if::cfg_if;
 use futures_lite::{stream, FutureExt as _, Stream, StreamExt as _};
+#[cfg(feature = "power-saver")]
+use std::collections::HashMap;
 #[cfg(feature = "accent-color")]
 use std::env;
 use std::time::Duration;
+#[cfg(feature = "power-saver")]
+use zbus::proxy::{Builder, CacheProperties};
 use zbus::{
     proxy::SignalStream,
     zvariant::{OwnedValue, Value},
@@ -33,12 +41,12 @@ fn log_dbus_connection_error(err: &zbus::Error) {
 #[cfg(not(feature = "log"))]
 fn log_dbus_connection_error(_err: &zbus::Error) {}
 
-#[cfg(feature = "log")]
+#[cfg(all(feature = "log", feature = "_settings-portal"))]
 fn log_initial_settings_retrieval_error(err: &zbus::Error) {
     log::warn!("error retrieving the initial setting values: {err:?}");
 }
 
-#[cfg(not(feature = "log"))]
+#[cfg(all(not(feature = "log"), feature = "_settings-portal"))]
 fn log_initial_settings_retrieval_error(_err: &zbus::Error) {}
 
 #[cfg(feature = "log")]
@@ -49,6 +57,15 @@ fn log_message_error(err: &zbus::Error) {
 #[cfg(not(feature = "log"))]
 fn log_message_error(_err: &zbus::Error) {}
 
+const PORTAL: &str = "org.freedesktop.portal.Desktop";
+const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
+#[cfg(feature = "power-saver")]
+const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
+#[cfg(feature = "power-saver")]
+const POWER_PROFILE_MONITOR: &str = "org.freedesktop.portal.PowerProfileMonitor";
+#[cfg(feature = "power-saver")]
+const POWER_SAVER_ENABLED: &str = "power-saver-enabled";
+#[cfg(feature = "_settings-portal")]
 const APPEARANCE: &str = "org.freedesktop.appearance";
 #[cfg(any(feature = "reduced-motion", feature = "accent-color", feature = "scrollbar-visibility"))]
 const GNOME_INTERFACE: &str = "org.gnome.desktop.interface";
@@ -100,24 +117,55 @@ cfg_if! {
 }
 
 fn preferences_stream(interest: Interest) -> impl Stream<Item = AvailablePreferences> {
-    stream::once_future(subscribe(interest)).flat_map(move |(state, preferences, stream)| {
+    stream::once_future(subscribe(interest)).flat_map(move |subscription| {
+        let Subscription {
+            state,
+            preferences,
+            #[cfg(feature = "_settings-portal")]
+            setting_changed,
+            #[cfg(feature = "power-saver")]
+            power_profile_changed,
+        } = subscription;
         let initial_value = stream::once(preferences);
-        let stream = stream.map(Left).unwrap_or_else(|| Right(stream::empty()));
-        initial_value.chain(changes(interest, state, preferences, stream))
+        #[cfg(feature = "_settings-portal")]
+        let signals = optional_stream(setting_changed).map(Signal::SettingChanged);
+        #[cfg(not(feature = "_settings-portal"))]
+        let signals = stream::empty();
+        #[cfg(feature = "power-saver")]
+        let signals = Merge::new(
+            signals,
+            optional_stream(power_profile_changed).map(Signal::PowerProfileChanged),
+        );
+        initial_value.chain(changes(interest, state, preferences, signals))
     })
 }
 
+fn optional_stream(stream: Option<SignalStream<'static>>) -> impl Stream<Item = Message> {
+    stream.map(Left).unwrap_or_else(|| Right(stream::empty()))
+}
+
+#[cfg_attr(not(feature = "_settings-portal"), expect(unused_mut))]
 fn changes(
     interest: Interest,
     state: State,
     preferences: AvailablePreferences,
-    stream: impl Stream<Item = Message>,
+    stream: impl Stream<Item = Signal>,
 ) -> impl Stream<Item = AvailablePreferences> {
     Scan::new(
         stream,
         (state, preferences),
-        move |(mut state, mut preferences), message| async move {
-            if let Err(err) = apply_message(interest, &mut state, &mut preferences, message).await {
+        move |(mut state, mut preferences), signal| async move {
+            let result = match signal {
+                #[cfg(feature = "_settings-portal")]
+                Signal::SettingChanged(message) => {
+                    apply_message(interest, &mut state, &mut preferences, message).await
+                }
+                #[cfg(feature = "power-saver")]
+                Signal::PowerProfileChanged(message) => {
+                    apply_power_profile_change(interest, &mut preferences, &message)
+                }
+            };
+            if let Err(err) = result {
                 log_message_error(&err);
             }
             Some(((state, preferences), preferences))
@@ -125,33 +173,79 @@ fn changes(
     )
 }
 
-async fn subscribe(
-    interest: Interest,
-) -> (State, AvailablePreferences, Option<SignalStream<'static>>) {
-    match connect().await {
-        Ok(proxy) => {
-            let stream = setting_changed(&proxy, interest)
-                .await
-                .inspect_err(log_dbus_connection_error)
-                .ok();
-            let (state, preferences) = initial_preferences(&proxy, interest)
-                .await
-                .inspect_err(log_initial_settings_retrieval_error)
-                .unwrap_or_default();
-            (state, preferences, stream)
-        }
+/// A signal from one of the portals that mundy subscribes to.
+enum Signal {
+    /// `SettingChanged` from the Settings portal.
+    #[cfg(feature = "_settings-portal")]
+    SettingChanged(Message),
+    /// `PropertiesChanged` from the Power Profile Monitor portal.
+    #[cfg(feature = "power-saver")]
+    PowerProfileChanged(Message),
+}
+
+#[derive(Default)]
+struct Subscription {
+    state: State,
+    preferences: AvailablePreferences,
+    #[cfg(feature = "_settings-portal")]
+    setting_changed: Option<SignalStream<'static>>,
+    #[cfg(feature = "power-saver")]
+    power_profile_changed: Option<SignalStream<'static>>,
+}
+
+async fn subscribe(interest: Interest) -> Subscription {
+    let connection = match Connection::session().await {
+        Ok(connection) => connection,
         Err(err) => {
             log_dbus_connection_error(&err);
-            Default::default()
+            return Subscription::default();
+        }
+    };
+    let mut subscription = Subscription::default();
+    #[cfg(feature = "_settings-portal")]
+    if uses_settings_portal(interest) {
+        match settings_proxy(&connection).await {
+            Ok(proxy) => {
+                subscription.setting_changed = setting_changed(&proxy, interest)
+                    .await
+                    .inspect_err(log_dbus_connection_error)
+                    .ok();
+                (subscription.state, subscription.preferences) =
+                    initial_preferences(&proxy, interest)
+                        .await
+                        .inspect_err(log_initial_settings_retrieval_error)
+                        .unwrap_or_default();
+            }
+            Err(err) => log_dbus_connection_error(&err),
         }
     }
+    #[cfg(feature = "power-saver")]
+    if interest.is(Interest::PowerSaver) {
+        // Subscribed before the first read so that no change falls between the two.
+        subscription.power_profile_changed = power_profile_changed(&connection)
+            .await
+            .inspect_err(log_dbus_connection_error)
+            .ok();
+        subscription.preferences.power_saver = read_power_saver_enabled(&connection)
+            .await
+            .map(parse_power_saver_enabled)
+            .unwrap_or_default();
+    }
+    subscription
 }
 
-async fn connect() -> zbus::Result<Proxy<'static>> {
-    let connection = Connection::session().await?;
-    settings_proxy(&connection).await
+/// Every preference except the power saver is read from the Settings portal.
+#[cfg(all(feature = "_settings-portal", feature = "power-saver"))]
+fn uses_settings_portal(interest: Interest) -> bool {
+    !Interest::PowerSaver.is(interest)
 }
 
+#[cfg(all(feature = "_settings-portal", not(feature = "power-saver")))]
+fn uses_settings_portal(_interest: Interest) -> bool {
+    true
+}
+
+#[cfg(feature = "_settings-portal")]
 async fn apply_message(
     interest: Interest,
     _state: &mut State,
@@ -204,6 +298,7 @@ async fn apply_message(
     Ok(())
 }
 
+#[cfg(feature = "_settings-portal")]
 async fn initial_preferences(
     proxy: &Proxy<'_>,
     interest: Interest,
@@ -269,16 +364,72 @@ async fn initial_preferences(
     Ok((_state, preferences))
 }
 
+#[cfg(feature = "_settings-portal")]
 async fn settings_proxy<'a>(connection: &Connection) -> zbus::Result<Proxy<'a>> {
     Proxy::new(
         connection,
-        "org.freedesktop.portal.Desktop",
-        "/org/freedesktop/portal/desktop",
+        PORTAL,
+        PORTAL_PATH,
         "org.freedesktop.portal.Settings",
     )
     .await
 }
 
+/// A proxy for one of the portal's interfaces that reads each property anew,
+/// so that it doesn't subscribe to property changes itself.
+#[cfg(feature = "power-saver")]
+async fn uncached_portal_proxy<'a>(
+    connection: &Connection,
+    interface: &'static str,
+) -> zbus::Result<Proxy<'a>> {
+    Builder::new(connection)
+        .destination(PORTAL)?
+        .path(PORTAL_PATH)?
+        .interface(interface)?
+        .cache_properties(CacheProperties::No)
+        .build()
+        .await
+}
+
+#[cfg(feature = "power-saver")]
+async fn power_profile_changed(connection: &Connection) -> zbus::Result<SignalStream<'static>> {
+    uncached_portal_proxy(connection, PROPERTIES)
+        .await?
+        .receive_signal_with_args("PropertiesChanged", &[(0, POWER_PROFILE_MONITOR)])
+        .await
+}
+
+#[cfg(feature = "power-saver")]
+async fn read_power_saver_enabled(connection: &Connection) -> Option<Value<'static>> {
+    uncached_portal_proxy(connection, POWER_PROFILE_MONITOR)
+        .await
+        .ok()?
+        .get_property::<OwnedValue>(POWER_SAVER_ENABLED)
+        .await
+        .ok()
+        .map(Value::from)
+}
+
+/// Reads `power-saver-enabled` from the changed properties, as GLib's `GPowerProfileMonitor` does:
+/// <https://gitlab.gnome.org/GNOME/glib/-/blob/main/gio/gpowerprofilemonitorportal.c>
+#[cfg(feature = "power-saver")]
+fn apply_power_profile_change(
+    interest: Interest,
+    preferences: &mut AvailablePreferences,
+    message: &Message,
+) -> Result<(), zbus::Error> {
+    let body = message.body();
+    let (interface, mut changed, _invalidated): (&str, HashMap<&str, Value>, Vec<&str>) =
+        body.deserialize()?;
+    if interface == POWER_PROFILE_MONITOR && interest.is(Interest::PowerSaver) {
+        if let Some(value) = changed.remove(POWER_SAVER_ENABLED) {
+            preferences.power_saver = parse_power_saver_enabled(value);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "_settings-portal")]
 async fn read_setting(proxy: &Proxy<'_>, namespace: &str, key: &str) -> Option<Value<'static>> {
     proxy
         .call::<_, _, OwnedValue>("Read", &(namespace, key))
@@ -291,6 +442,7 @@ async fn read_setting(proxy: &Proxy<'_>, namespace: &str, key: &str) -> Option<V
 // `Read` returns a variant inside a variant *sigh*.
 // In theory there's `ReadOne` which fixes this but I
 // haven't checked how ubiquitously it is available.
+#[cfg(feature = "_settings-portal")]
 fn flatten_value(value: Value<'_>) -> Value<'_> {
     if let Value::Value(inner) = value {
         *inner
@@ -299,6 +451,7 @@ fn flatten_value(value: Value<'_>) -> Value<'_> {
     }
 }
 
+#[cfg(feature = "_settings-portal")]
 async fn setting_changed(
     proxy: &Proxy<'_>,
     interest: Interest,
@@ -308,6 +461,7 @@ async fn setting_changed(
         .await
 }
 
+#[cfg(feature = "_settings-portal")]
 fn signal_filter(
     #[cfg_attr(
         not(any(feature = "_gnome_only", feature = "accent-color")),
@@ -449,6 +603,16 @@ fn parse_overlay_scrolling(value: Value) -> ScrollbarVisibility {
     }
 }
 
+// Stored as a boolean:
+// <https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.PowerProfileMonitor.html>
+#[cfg(feature = "power-saver")]
+fn parse_power_saver_enabled(value: Value) -> PowerSaver {
+    match bool::try_from(value) {
+        Ok(true) => PowerSaver::Enabled,
+        Ok(false) | Err(_) => PowerSaver::NoPreference,
+    }
+}
+
 #[cfg(feature = "accent-color")]
 fn is_ubuntu() -> bool {
     use std::sync::LazyLock;
@@ -465,4 +629,84 @@ struct State {
     has_reduced_motion_setting: bool,
     #[cfg(feature = "accent-color")]
     has_accent_color: bool,
+}
+
+#[cfg(all(test, feature = "power-saver"))]
+mod tests {
+    use super::*;
+
+    fn properties_changed(interface: &str, changed: &[(&str, Value<'_>)]) -> Message {
+        let changed: HashMap<&str, &Value<'_>> =
+            changed.iter().map(|(name, value)| (*name, value)).collect();
+        let invalidated: Vec<&str> = Vec::new();
+        Message::signal(PORTAL_PATH, PROPERTIES, "PropertiesChanged")
+            .expect("valid header")
+            .build(&(interface, changed, invalidated))
+            .expect("valid body")
+    }
+
+    fn apply(interest: Interest, message: &Message) -> PowerSaver {
+        let mut preferences = AvailablePreferences {
+            power_saver: PowerSaver::Enabled,
+            ..Default::default()
+        };
+        apply_power_profile_change(interest, &mut preferences, message).expect("valid signal");
+        preferences.power_saver
+    }
+
+    #[test]
+    fn parses_power_saver_enabled() {
+        assert_eq!(PowerSaver::Enabled, parse_power_saver_enabled(Value::from(true)));
+        assert_eq!(
+            PowerSaver::NoPreference,
+            parse_power_saver_enabled(Value::from(false))
+        );
+        assert_eq!(
+            PowerSaver::NoPreference,
+            parse_power_saver_enabled(Value::from(1u32)),
+            "a value of the wrong type is no preference"
+        );
+    }
+
+    #[test]
+    fn applies_a_change_of_power_saver_enabled() {
+        let disabled = properties_changed(
+            POWER_PROFILE_MONITOR,
+            &[(POWER_SAVER_ENABLED, Value::from(false))],
+        );
+        assert_eq!(PowerSaver::NoPreference, apply(Interest::PowerSaver, &disabled));
+    }
+
+    #[test]
+    fn keeps_the_value_when_the_change_is_not_about_it() {
+        let other_property =
+            properties_changed(POWER_PROFILE_MONITOR, &[("version", Value::from(1u32))]);
+        let other_interface = properties_changed(
+            "org.freedesktop.portal.Other",
+            &[(POWER_SAVER_ENABLED, Value::from(false))],
+        );
+        for message in [other_property, other_interface] {
+            assert_eq!(PowerSaver::Enabled, apply(Interest::PowerSaver, &message));
+        }
+    }
+
+    #[cfg(feature = "color-scheme")]
+    #[test]
+    fn keeps_the_value_without_interest() {
+        let disabled = properties_changed(
+            POWER_PROFILE_MONITOR,
+            &[(POWER_SAVER_ENABLED, Value::from(false))],
+        );
+        assert_eq!(PowerSaver::Enabled, apply(Interest::ColorScheme, &disabled));
+    }
+
+    #[test]
+    fn rejects_a_malformed_signal() {
+        let message = Message::signal(PORTAL_PATH, PROPERTIES, "PropertiesChanged")
+            .expect("valid header")
+            .build(&(POWER_PROFILE_MONITOR,))
+            .expect("valid body");
+        let mut preferences = AvailablePreferences::default();
+        assert!(apply_power_profile_change(Interest::PowerSaver, &mut preferences, &message).is_err());
+    }
 }
