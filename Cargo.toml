@@ -99,6 +99,13 @@ double-click-interval = [
     "windows/Win32_UI_Input_KeyboardAndMouse",
 ]
 scrollbar-visibility = ["_gnome_only", "_settings-portal", "_windows-ui-settings"]
+power-saver = [
+    "_macos-observable",
+    "objc2-foundation/NSNotification",
+    "objc2-foundation/NSProcessInfo",
+    "windows/Win32_System_Power",
+    "windows/Win32_System_SystemServices",
+]
 _all-preferences = [
     "color-scheme",
     "contrast",
@@ -107,6 +114,7 @@ _all-preferences = [
     "scrollbar-visibility",
     "accent-color",
     "double-click-interval",
+    "power-saver",
 ]
 _macos-accessibility = [
     "_macos-observable",

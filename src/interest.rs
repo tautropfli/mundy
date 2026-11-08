@@ -69,6 +69,11 @@ impl_interest! {
         /// Retrieve the [`ScrollbarVisibility`](`crate::ScrollbarVisibility`) preference
         /// and store it in [`Preferences::scrollbar_visibility`](`crate::Preferences::scrollbar_visibility`).
         pub const ScrollbarVisibility: Interest = Interest(1 << 6);
+
+        #[cfg(feature = "power-saver")]
+        /// Retrieve the [`PowerSaver`](`crate::PowerSaver`) preference
+        /// and store it in [`Preferences::power_saver`](`crate::Preferences::power_saver`).
+        pub const PowerSaver: Interest = Interest(1 << 7);
     }
 }
 

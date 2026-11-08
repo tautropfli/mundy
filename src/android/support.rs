@@ -60,6 +60,7 @@ bind_java_type! {
         pub(crate) fn get_high_contrast() -> bool,
         pub(crate) fn get_prefers_reduced_motion() -> bool,
         pub(crate) fn get_accent_color() -> i32,
+        pub(crate) fn get_power_save_mode() -> bool,
         pub(crate) fn subscribe(),
         pub(crate) fn unsubscribe(),
     },

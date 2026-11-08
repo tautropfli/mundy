@@ -19,6 +19,7 @@
 //! * [`ReducedTransparency`]—The user's reduced transparency preference.
 //! * [`DoubleClickInterval`]—The maximum amount of time allowed between the first and second click.
 //! * [`ScrollbarVisibility`]—Whether the scrollbar should be always visible or auto-hide.
+//! * [`PowerSaver`]—Whether the user turned on a power saving mode.
 //!
 //! Note that each preference has a corresponding [feature flag](`feature_flags`).
 //! By turning off [default features](https://doc.rust-lang.org/cargo/reference/features.html#the-default-feature)
@@ -165,6 +166,7 @@ pub mod platform {
 /// * `accent-color`—Enable support for [`AccentColor`] (*default*).
 /// * `double-click-interval`—Enable support for [`DoubleClickInterval`] (*default*).
 /// * `scrollbar-visibility`—Enable support for [`ScrollbarVisibility`] (*default*).
+/// * `power-saver`—Enable support for [`PowerSaver`] (*default*).
 /// * (Linux) `async-io`—Use `zbus` with `async-io` (*default*).
 /// * (Linux) `tokio`—Use `zbus` with `tokio` instead of `async-io`.
 ///
@@ -210,6 +212,9 @@ pub struct Preferences {
     /// Whether the scrollbar should be always visible or auto-hide (overlay).
     #[cfg(feature = "scrollbar-visibility")]
     pub scrollbar_visibility: ScrollbarVisibility,
+    /// Whether the user turned on a power saving mode.
+    #[cfg(feature = "power-saver")]
+    pub power_saver: PowerSaver,
 }
 
 impl Preferences {
@@ -293,6 +298,7 @@ impls! {
         "accent-color" accent_color,
         "double-click-interval" double_click_interval,
         "scrollbar-visibility" scrollbar_visibility,
+        "power-saver" power_saver,
     };
 
     #[cfg(windows)]
@@ -304,6 +310,7 @@ impls! {
         "reduced-transparency" reduced_transparency,
         "double-click-interval" double_click_interval,
         "scrollbar-visibility" scrollbar_visibility,
+        "power-saver" power_saver,
     };
 
     #[cfg(target_os = "macos")]
@@ -315,6 +322,7 @@ impls! {
         "accent-color" accent_color,
         "double-click-interval" double_click_interval,
         "scrollbar-visibility" scrollbar_visibility,
+        "power-saver" power_saver,
     };
 
     #[cfg(all(target_family = "wasm", target_os = "unknown"))]
@@ -332,6 +340,7 @@ impls! {
         "contrast" contrast,
         "reduced-motion" reduced_motion,
         "accent-color" accent_color,
+        "power-saver" power_saver,
     };
 }
 
@@ -575,6 +584,53 @@ impl ScrollbarVisibility {
 
     pub fn is_always(self) -> bool {
         matches!(self, ScrollbarVisibility::Always)
+    }
+}
+
+/// Whether the user turned on a power saving mode, such as Low Power Mode on macOS,
+/// energy saver on Windows or Battery Saver on Android.
+///
+/// An app can respect it by doing less work that costs energy,
+/// for example by pausing background activity or lowering the frame rate of animations.
+///
+/// <details>
+/// <summary style="cursor: pointer">
+///
+/// #### Platform-specific Sources
+///
+/// </summary>
+///
+/// * Linux: `power-saver-enabled` from the [XDG Power Profile Monitor portal][xdg-power].
+/// * Windows: The [power settings] `GUID_ENERGY_SAVER_STATUS` (energy saver, Windows 11 24H2 and later)
+///   and `GUID_POWER_SAVING_STATUS` (battery saver, earlier versions).
+/// * macOS: [`NSProcessInfo.isLowPowerModeEnabled`](https://developer.apple.com/documentation/foundation/processinfo/islowpowermodeenabled) (macOS 12 and later)
+/// * Web: Unsupported
+/// * Android: [`PowerManager.isPowerSaveMode`](https://developer.android.com/reference/android/os/PowerManager#isPowerSaveMode())
+///
+/// </details>
+///
+/// [xdg-power]: https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.PowerProfileMonitor.html
+/// [power settings]: https://learn.microsoft.com/en-us/windows/win32/power/power-setting-guids
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "power-saver")]
+pub enum PowerSaver {
+    /// Indicates that no power saving mode is turned on,
+    /// that the current platform doesn't support a power saving mode
+    /// or that an error occurred while trying to retrieve the preference.
+    #[default]
+    NoPreference,
+    /// Indicates that a power saving mode is turned on.
+    Enabled,
+}
+
+#[cfg(feature = "power-saver")]
+impl PowerSaver {
+    pub fn is_no_preference(self) -> bool {
+        matches!(self, PowerSaver::NoPreference)
+    }
+
+    pub fn is_enabled(self) -> bool {
+        matches!(self, PowerSaver::Enabled)
     }
 }
 

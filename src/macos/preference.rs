@@ -5,6 +5,8 @@ use crate::AvailablePreferences;
 use crate::ColorScheme;
 #[cfg(feature = "contrast")]
 use crate::Contrast;
+#[cfg(feature = "power-saver")]
+use crate::PowerSaver;
 #[cfg(feature = "reduced-motion")]
 use crate::ReducedMotion;
 #[cfg(feature = "reduced-transparency")]
@@ -22,6 +24,8 @@ pub(crate) enum Preference {
     AccentColor(AccentColor),
     #[cfg(feature = "scrollbar-visibility")]
     ScrollbarVisibility(ScrollbarVisibility),
+    #[cfg(feature = "power-saver")]
+    PowerSaver(PowerSaver),
 }
 
 #[cfg(feature = "_macos-accessibility")]
@@ -59,6 +63,8 @@ impl Preference {
             Preference::AccentColor(v) => preferences.accent_color = v,
             #[cfg(feature = "scrollbar-visibility")]
             Preference::ScrollbarVisibility(v) => preferences.scrollbar_visibility = v,
+            #[cfg(feature = "power-saver")]
+            Preference::PowerSaver(v) => preferences.power_saver = v,
         };
         preferences
     }

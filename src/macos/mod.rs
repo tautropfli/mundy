@@ -8,6 +8,8 @@ use crate::ColorScheme;
 use crate::Contrast;
 #[cfg(feature = "double-click-interval")]
 use crate::DoubleClickInterval;
+#[cfg(feature = "power-saver")]
+use crate::PowerSaver;
 #[cfg(feature = "reduced-motion")]
 use crate::ReducedMotion;
 #[cfg(feature = "reduced-transparency")]
@@ -20,6 +22,8 @@ use crate::{AvailablePreferences, Interest};
 #[cfg(feature = "_macos-observable")]
 use futures_channel::mpsc;
 use futures_lite::{stream, Stream, StreamExt as _};
+#[cfg(feature = "power-saver")]
+use objc2::available;
 use objc2_app_kit::NSApplication;
 #[cfg(feature = "double-click-interval")]
 use objc2_app_kit::NSEvent;
@@ -34,6 +38,8 @@ use objc2_app_kit::{NSScroller, NSScrollerStyle};
 use objc2_foundation::MainThreadMarker;
 #[cfg(feature = "color-scheme")]
 use objc2_foundation::NSArray;
+#[cfg(feature = "power-saver")]
+use objc2_foundation::NSProcessInfo;
 #[cfg(feature = "_macos-observable")]
 use observer::{Observer, ObserverRegistration};
 use pin_project_lite::pin_project;
@@ -173,6 +179,11 @@ fn get_preferences(
         preferences.scrollbar_visibility = get_scrollbar_visibility(mtm);
     }
 
+    #[cfg(feature = "power-saver")]
+    if interest.is(Interest::PowerSaver) {
+        preferences.power_saver = get_power_saver();
+    }
+
     preferences
 }
 
@@ -255,5 +266,15 @@ fn get_scrollbar_visibility(mtm: MainThreadMarker) -> ScrollbarVisibility {
         s if s == NSScrollerStyle::Legacy => ScrollbarVisibility::Always,
         s if s == NSScrollerStyle::Overlay => ScrollbarVisibility::Auto,
         _ => ScrollbarVisibility::NoPreference,
+    }
+}
+
+#[cfg(feature = "power-saver")]
+fn get_power_saver() -> PowerSaver {
+    // `isLowPowerModeEnabled` was added to macOS in version 12.
+    if available!(macos = 12.0) && NSProcessInfo::processInfo().isLowPowerModeEnabled() {
+        PowerSaver::Enabled
+    } else {
+        PowerSaver::NoPreference
     }
 }

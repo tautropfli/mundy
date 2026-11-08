@@ -1,8 +1,4 @@
 ## Possible extensions:
-* Power Saver Mode:
-  * Linux: PowerProfileMonitor portal (power-saver-enabled)
-  * Windows: PowerManager.EnergySaverStatus (WinRT)
-  * macOS: lowPowerModeEnabled <https://developer.apple.com/documentation/foundation/nsprocessinfo/1617047-lowpowermodeenabled>
 * Forced colors / System Colors
 * metered connection / prefers-reduced-data
   * Linux: NetworkMonitor portal

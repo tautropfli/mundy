@@ -38,6 +38,16 @@ impl<T> Callbacks<T> {
     pub(crate) fn remove(&mut self, handle: CallbackHandle) {
         self.callbacks.retain(|c| c.handle != handle.0);
     }
+
+    /// Looks up a callback by the [`CallbackHandle::id`] of its handle.
+    /// Handles are never reused, so the id of a removed callback finds nothing.
+    #[cfg(any(all(windows, feature = "power-saver"), test))]
+    pub(crate) fn get(&self, id: usize) -> Option<&T> {
+        self.callbacks
+            .iter()
+            .find(|c| c.handle == id)
+            .map(|c| &c.value)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -55,6 +65,14 @@ impl error::Error for OverflowError {}
 #[derive(Debug, Default)]
 #[must_use]
 pub(crate) struct CallbackHandle(usize);
+
+impl CallbackHandle {
+    /// An id for passing the handle through an API that takes an opaque value, such as a C callback's context.
+    #[cfg(any(all(windows, feature = "power-saver"), test))]
+    pub(crate) fn id(&self) -> usize {
+        self.0
+    }
+}
 
 #[derive(Debug)]
 struct Callback<T> {
@@ -105,6 +123,22 @@ mod tests {
         callbacks.remove(baz);
         callbacks.remove(foo);
         assert_eq!(0, callbacks.iter().count());
+    }
+
+    #[test]
+    fn gets_an_entry_by_id_until_it_is_removed() {
+        let mut callbacks = Callbacks::new();
+        let foo = callbacks.add("foo").expect("no overflow");
+        let bar = callbacks.add("bar").expect("no overflow");
+        let (foo_id, bar_id) = (foo.id(), bar.id());
+        assert_eq!(Some(&"foo"), callbacks.get(foo_id));
+        assert_eq!(Some(&"bar"), callbacks.get(bar_id));
+        assert_eq!(None, callbacks.get(CallbackHandle::default().id()));
+        callbacks.remove(foo);
+        assert_eq!(None, callbacks.get(foo_id));
+        assert_eq!(Some(&"bar"), callbacks.get(bar_id));
+        let _baz = callbacks.add("baz").expect("no overflow");
+        assert_eq!(None, callbacks.get(foo_id), "ids are not reused");
     }
 
     #[test]

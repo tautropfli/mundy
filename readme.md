@@ -14,6 +14,7 @@ The following preferences are supported:
 * [`ReducedTransparency`](https://docs.rs/mundy/latest/mundy/enum.ReducedTransparency.html)—The user's reduced transparency preference.
 * [`DoubleClickInterval`](https://docs.rs/mundy/latest/mundy/struct.DoubleClickInterval.html)—The maximum amount of time allowed between the first and second click.
 * [`ScrollbarVisibility`](https://docs.rs/mundy/latest/mundy/enum.ScrollbarVisibility.html)—Whether the scrollbar should be always visible or auto-hide.
+* [`PowerSaver`](https://docs.rs/mundy/latest/mundy/enum.PowerSaver.html)—Whether the user turned on a power saving mode.
 
 ## Example
 ```rust,no_run

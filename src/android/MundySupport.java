@@ -4,13 +4,17 @@ import static android.content.Context.UI_MODE_SERVICE;
 
 import android.app.UiModeManager.ContrastChangeListener;
 import android.app.UiModeManager;
+import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
 import android.database.ContentObserver;
 import android.os.Build;
 import android.os.Handler;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.ContextThemeWrapper;
@@ -28,6 +32,7 @@ public class MundySupport {
 
     private ContrastChangeListener contrastChangeListener;
     private ContentObserver contentObserver;
+    private BroadcastReceiver powerSaveModeReceiver;
 
     /**
      * Invoked only via JNI.
@@ -67,6 +72,20 @@ public class MundySupport {
         contentResolver.registerContentObserver(Settings.Secure.getUriFor("high_text_contrast_enabled"), notifyForDescendants, contentObserver);
         contentResolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE), notifyForDescendants, contentObserver);
 
+        // Registered with the application context, which outlives an activity that is re-created:
+        // <https://developer.android.com/develop/background-work/background-tasks/broadcasts#context-registered-receivers>
+        // A system broadcast, so the receiver needs no export flag on Android 14 and later:
+        // <https://developer.android.com/about/versions/14/behavior-changes-14#runtime-receivers-exported>
+        powerSaveModeReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                onPreferencesChanged();
+            }
+        };
+        final IntentFilter powerSaveModeFilter = new IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
+        final String broadcastPermission = null;
+        context.getApplicationContext().registerReceiver(powerSaveModeReceiver, powerSaveModeFilter, broadcastPermission, MundyBackgroundThread.getHandler());
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             final UiModeManager uiModeManager = (UiModeManager) context.getSystemService(UI_MODE_SERVICE);
             contrastChangeListener = new ContrastChangeListener() {
@@ -82,6 +101,7 @@ public class MundySupport {
         Log.v(TAG, "unsubscribe called");
 
         contentResolver.unregisterContentObserver(contentObserver);
+        context.getApplicationContext().unregisterReceiver(powerSaveModeReceiver);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             final UiModeManager uiModeManager = (UiModeManager) context.getSystemService(UI_MODE_SERVICE);
@@ -120,6 +140,12 @@ public class MundySupport {
         final int color = attributes.getColor(index, defaultValue);
         attributes.recycle();
         return color;
+    }
+
+    // <https://developer.android.com/reference/android/os/PowerManager#isPowerSaveMode()>
+    public boolean getPowerSaveMode() {
+        final PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        return powerManager.isPowerSaveMode();
     }
 
     private boolean getHighTextContrastEnabled() {
